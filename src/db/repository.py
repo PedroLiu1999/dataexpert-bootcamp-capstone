@@ -176,6 +176,50 @@ def get_paper_by_id(paper_id: str) -> Optional[Dict[str, Any]]:
             return dict(row) if row else None
 
 
+def upsert_author(author_id: str, display_name: str, institution: Optional[str] = None) -> Dict[str, Any]:
+    record = {"author_id": author_id, "display_name": display_name, "institution": institution}
+    if not is_postgres_available():
+        _MOCK_AUTHORS[author_id] = record
+        return record
+
+    query = """
+        INSERT INTO authors (author_id, display_name, institution)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (author_id) DO UPDATE SET
+            display_name = EXCLUDED.display_name,
+            institution = EXCLUDED.institution;
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (author_id, display_name, institution))
+        conn.commit()
+    return record
+
+
+def upsert_paper_author(paper_id: str, author_id: str, author_position: int = 1) -> Dict[str, Any]:
+    record = {"paper_id": paper_id, "author_id": author_id, "author_position": author_position}
+    if not is_postgres_available():
+        # Upsert into mock list
+        for idx, existing in enumerate(_MOCK_PAPER_AUTHORS):
+            if existing["paper_id"] == paper_id and existing["author_id"] == author_id:
+                _MOCK_PAPER_AUTHORS[idx] = record
+                return record
+        _MOCK_PAPER_AUTHORS.append(record)
+        return record
+
+    query = """
+        INSERT INTO paper_authors (paper_id, author_id, author_position)
+        VALUES (%s, %s, %s)
+        ON CONFLICT (paper_id, author_id) DO UPDATE SET
+            author_position = EXCLUDED.author_position;
+    """
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(query, (paper_id, author_id, author_position))
+        conn.commit()
+    return record
+
+
 # --- Collections ---
 def create_collection(user_id: str, name: str, description: Optional[str] = None) -> Dict[str, Any]:
     collection_id = str(uuid.uuid4())

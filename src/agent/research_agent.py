@@ -19,17 +19,36 @@ from src.agent.tools import (
 logger = logging.getLogger(__name__)
 
 
-def classify_intent(prompt: str) -> str:
+def classify_intent_with_entities(prompt: str) -> Dict[str, Any]:
     p_lower = prompt.lower()
+    intent = "rag_synthesis"
+    entities = {}
+
     if "collection" in p_lower or ("add" in p_lower and "save" in p_lower):
-        return "add_to_collection"
+        intent = "add_to_collection"
+        coll_name = "General Research"
+        if "to" in p_lower:
+            parts = prompt.split("to")
+            if len(parts) > 1:
+                coll_name = parts[-1].replace("collection", "").strip().title() or "General Research"
+        entities["collection_name"] = coll_name
+
     elif "plan" in p_lower or "study" in p_lower or "sequence" in p_lower:
-        return "generate_plan"
+        intent = "generate_plan"
+        target = prompt
+        for kw in ["for", "about", "on"]:
+            if f" {kw} " in p_lower:
+                target = prompt.split(f" {kw} ", 1)[-1].strip()
+                break
+        entities["target_goal"] = target
+
     elif "progress" in p_lower or "complete" in p_lower or "finish" in p_lower or "mark" in p_lower:
-        return "track_progress"
+        intent = "track_progress"
+
     elif "note" in p_lower or "remember" in p_lower:
-        return "take_note"
-    return "rag_synthesis"
+        intent = "take_note"
+
+    return {"intent": intent, "entities": entities}
 
 
 class ResearchAgent:
@@ -39,24 +58,23 @@ class ResearchAgent:
 
     def process_user_request(self, prompt: str, goal_title: Optional[str] = None) -> Dict[str, Any]:
         """
-        Main agent invocation method. Evaluates prompt intent, selects tools,
-        retrieves RAG paper evidence with similarity scores & grounding rationale,
-        executes database actions, and returns answer with citations and structured tool history.
+        Main agent invocation method. Evaluates prompt intent with entity extraction,
+        selects tools with explicit rationale, executes actions, and returns grounded response.
         """
-        intent = classify_intent(prompt)
-        p_lower = prompt.lower()
+        classification = classify_intent_with_entities(prompt)
+        intent = classification["intent"]
+        entities = classification["entities"]
+
         actions_taken = []
         citations = []
         response_text = ""
         now_iso = datetime.now(timezone.utc).isoformat()
+        rationale = ""
 
         # 1. Action: Add to collection intent
         if intent == "add_to_collection":
-            coll_name = "General Research"
-            if "to" in p_lower:
-                parts = prompt.split("to")
-                if len(parts) > 1:
-                    coll_name = parts[-1].replace("collection", "").strip().title() or "General Research"
+            coll_name = entities.get("collection_name", "General Research")
+            rationale = f"Detected collection management intent for collection '{coll_name}'. Invoking tool_vector_search_papers to retrieve best matching paper."
 
             search_res = tool_vector_search_papers(prompt, top_k=1)
             if not search_res:
@@ -64,7 +82,7 @@ class ResearchAgent:
 
             if search_res:
                 p = search_res[0]
-                tool_res = tool_add_paper_to_collection(self.user_id, coll_name, p["paper_id"])
+                tool_add_paper_to_collection(self.user_id, coll_name, p["paper_id"])
                 act_msg = f"Saved paper '{p['title']}' to collection '{coll_name}'."
                 actions_taken.append(act_msg)
                 self.execution_history.append({
@@ -74,13 +92,14 @@ class ResearchAgent:
                     "status": "success"
                 })
                 citations.append({"paper_id": p["paper_id"], "title": p["title"], "url": p.get("open_access_url")})
-                response_text = f"Added **{p['title']}** to your collection **'{coll_name}'**.\n\n"
+                response_text = f"💡 *Agent Rationale*: {rationale}\n\nAdded **{p['title']}** to your collection **'{coll_name}'**.\n\n"
             else:
-                response_text = "I searched for papers matching your request but could not find a suitable candidate to add.\n\n"
+                response_text = f"💡 *Agent Rationale*: {rationale}\n\nCould not find a paper matching query '{prompt}' to add to collection.\n\n"
 
         # 2. Action: Sequenced Study / Reading Plan intent
         elif intent == "generate_plan":
-            target_goal = goal_title or prompt
+            target_goal = goal_title or entities.get("target_goal", prompt)
+            rationale = f"Classified goal sequence intent for topic '{target_goal}'. Invoking tool_generate_sequenced_reading_plan."
             plan = tool_generate_sequenced_reading_plan(self.user_id, target_goal)
             act_msg = f"Generated {len(plan)}-step sequenced reading plan for '{target_goal}'."
             actions_taken.append(act_msg)
@@ -91,7 +110,7 @@ class ResearchAgent:
                 "status": "success"
             })
 
-            lines = [f"### Sequenced Study Plan for *{target_goal}*\n"]
+            lines = [f"💡 *Agent Rationale*: {rationale}\n", f"### Sequenced Study Plan for *{target_goal}*\n"]
             for step in plan:
                 lines.append(f"**Step {step['step']}: {step['title']}** [{step['step']}]")
                 lines.append(f"- *Status*: `{step['status']}` | *Citations*: {step['citation_count']}")
@@ -109,7 +128,11 @@ class ResearchAgent:
 
         # 3. Action: Progress tracking intent
         elif intent == "track_progress":
+            rationale = "Recognized reading progress update request. Searching Lakebase pgvector storage for target paper."
             matches = tool_vector_search_papers(prompt, top_k=1)
+            if not matches:
+                matches = tool_search_openalex_papers(prompt, limit=1)
+
             if matches:
                 p = matches[0]
                 tool_track_reading_progress(self.user_id, p["paper_id"], status="completed")
@@ -121,13 +144,14 @@ class ResearchAgent:
                     "parameters": {"paper_id": p["paper_id"], "status": "completed"},
                     "status": "success"
                 })
-                response_text = f"Updated reading progress: Marked **{p['title']}** as **Completed**! Recommended next paper in sequence is ready in your plan."
+                response_text = f"💡 *Agent Rationale*: {rationale}\n\nUpdated reading progress: Marked **{p['title']}** as **Completed**! Recommended next paper in sequence is ready in your plan."
                 citations.append({"paper_id": p["paper_id"], "title": p["title"], "url": p.get("open_access_url")})
             else:
-                response_text = "Retrieved your reading progress list. You are on track with your study plan!"
+                response_text = f"💡 *Agent Rationale*: {rationale}\n\nNo matching paper found for query '{prompt}'. Retrying search or checking user reading progress."
 
         # 4. Action: Note taking intent
         elif intent == "take_note":
+            rationale = "Recognized note creation request. Executing tool_add_user_note to persist in Lakebase."
             tool_add_user_note(self.user_id, prompt)
             act_msg = "Recorded student study note in Lakebase."
             actions_taken.append(act_msg)
@@ -137,10 +161,11 @@ class ResearchAgent:
                 "parameters": {"content": prompt[:50]},
                 "status": "success"
             })
-            response_text = f"Recorded your study note in Lakebase: *\"{prompt}\"*."
+            response_text = f"💡 *Agent Rationale*: {rationale}\n\nRecorded your study note in Lakebase: *\"{prompt}\"*."
 
         # 5. Default RAG Research Evidence Retrieval & Synthesis with Grounding Rationale
         else:
+            rationale = "Selected multi-paper RAG vector search & synthesis tool to retrieve evidence passages."
             rag_results = tool_vector_search_papers(prompt, top_k=4)
             if not rag_results:
                 rag_results = tool_search_openalex_papers(prompt, limit=4)
@@ -154,7 +179,7 @@ class ResearchAgent:
                 "status": "success"
             })
 
-            lines = [f"### Research Synthesis & Multi-Paper Evidence Analysis\n"]
+            lines = [f"💡 *Agent Rationale*: {rationale}\n", f"### Research Synthesis & Multi-Paper Evidence Analysis\n"]
             for idx, p in enumerate(rag_results):
                 c_num = idx + 1
                 sim = p.get("similarity", 0.85)
@@ -180,6 +205,8 @@ class ResearchAgent:
         return {
             "query": prompt,
             "intent": intent,
+            "entities": entities,
+            "agent_rationale": rationale,
             "response": response_text,
             "actions_taken": actions_taken,
             "citations": citations,

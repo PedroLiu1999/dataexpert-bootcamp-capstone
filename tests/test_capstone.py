@@ -247,4 +247,17 @@ def test_delta_cdf_analytics():
     assert analytics["cdf_enabled"] is True
 
 
+def test_persist_authorship_data():
+    from src.db.repository import upsert_author, upsert_paper_author, _MOCK_AUTHORS, _MOCK_PAPER_AUTHORS
+
+    a_rec = upsert_author("A_TEST_1", "Geoffrey Hinton", "University of Toronto")
+    assert a_rec["display_name"] == "Geoffrey Hinton"
+    assert _MOCK_AUTHORS["A_TEST_1"]["institution"] == "University of Toronto"
+
+    pa_rec = upsert_paper_author("W_TEST_PAPER", "A_TEST_1", author_position=1)
+    assert pa_rec["paper_id"] == "W_TEST_PAPER"
+    assert len(_MOCK_PAPER_AUTHORS) >= 1
+
+
+
 

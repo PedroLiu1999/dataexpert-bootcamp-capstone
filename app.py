@@ -157,6 +157,7 @@ with tab_discover:
             with c1:
                 if st.button(f"➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
                     tool_add_paper_to_collection(user_id, "General Research", p["paper_id"])
+                    cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_add_paper_to_collection", "paper_id": p["paper_id"], "collection": "General Research"})
                     cdf_tracker.log_event("paper_added", user_id, {"paper_id": p["paper_id"], "collection": "General Research"})
                     st.toast(f"Added '{p['title'][:30]}...' to collection!")
             with c2:
@@ -228,8 +229,22 @@ with tab_agent:
                 ans = agent_res["response"]
                 if agent_res.get("actions_taken"):
                     ans += "\n\n**Agent Tool Actions Executed:**\n" + "\n".join(f"- `{act}`" for act in agent_res["actions_taken"])
-                    for act in agent_res["actions_taken"]:
-                        cdf_tracker.log_event("tool_call", user_id, {"action": act, "intent": agent_res.get("intent")})
+                    tool_hist = agent_res.get("tool_history", [])
+                    if tool_hist:
+                        for th in tool_hist:
+                            cdf_tracker.log_event("tool_call", user_id, {"tool_name": th.get("tool_name"), "params": th.get("parameters"), "intent": agent_res.get("intent")})
+                    else:
+                        for act in agent_res["actions_taken"]:
+                            t_name = "tool_vector_search_papers"
+                            if "collection" in act.lower():
+                                t_name = "tool_add_paper_to_collection"
+                            elif "plan" in act.lower():
+                                t_name = "tool_generate_sequenced_reading_plan"
+                            elif "completed" in act.lower():
+                                t_name = "tool_track_reading_progress"
+                            elif "note" in act.lower():
+                                t_name = "tool_add_user_note"
+                            cdf_tracker.log_event("tool_call", user_id, {"tool_name": t_name, "action": act, "intent": agent_res.get("intent")})
 
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})

@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 # Ensure parent directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.db.repository import init_db, insert_paper_embeddings, upsert_paper
+from src.db.repository import init_db, insert_paper_embeddings, upsert_paper, upsert_author, upsert_paper_author
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -111,6 +111,12 @@ def process_and_embed_papers(papers_list: List[Dict[str, Any]]) -> int:
             open_access_url=paper.get("open_access_url"),
             topics=paper.get("topics"),
         )
+        for author in paper.get("authors", []):
+            a_id = author.get("author_id")
+            a_name = author.get("display_name")
+            if a_id and a_name:
+                upsert_author(a_id, a_name, author.get("institution"))
+                upsert_paper_author(paper["paper_id"], a_id, author.get("author_position", 1))
 
     # Try PySpark distributed execution
     spark_success = False
