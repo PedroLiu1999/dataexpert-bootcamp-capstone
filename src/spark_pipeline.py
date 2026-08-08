@@ -89,37 +89,22 @@ def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHU
 def process_and_embed_papers(papers_list: List[Dict[str, Any]]) -> int:
     """
     Ingests and embeds paper records into Lakebase.
-    Uses PySpark local session for batch processing when Spark is active.
+    Uses PySpark distributed DataFrame transformations when Spark is active,
+    falling back to Python batch processing when Spark is unavailable.
     """
     init_db()
     if not papers_list:
         return 0
 
     logger.info(f"Ingesting {len(papers_list)} paper records...")
-
-    # Initialize PySpark session if available
-    spark_active = False
-    try:
-        from pyspark.sql import SparkSession
-        spark = SparkSession.builder.appName("CapstoneSparkPipeline").master("local[*]").getOrCreate()
-        spark_active = True
-        logger.info("PySpark session successfully initialized for paper batch pipeline.")
-    except Exception as e:
-        logger.info(f"PySpark environment not available ({e}); using Python batch processor.")
-
-    embedded_chunks_count = 0
     now_iso = datetime.now(timezone.utc).isoformat()
 
+    # 1. Upsert paper metadata records into Lakebase
     for paper in papers_list:
-        paper_id = paper["paper_id"]
-        title = paper["title"]
-        abstract = paper["abstract"]
-
-        # 1. Upsert paper record into Lakebase
         upsert_paper(
-            paper_id=paper_id,
-            title=title,
-            abstract=abstract,
+            paper_id=paper["paper_id"],
+            title=paper["title"],
+            abstract=paper["abstract"],
             doi=paper.get("doi"),
             publication_year=paper.get("publication_year"),
             citation_count=paper.get("citation_count", 0),
@@ -127,26 +112,77 @@ def process_and_embed_papers(papers_list: List[Dict[str, Any]]) -> int:
             topics=paper.get("topics"),
         )
 
-        # 2. Chunk and embed abstract/content text
-        text_to_embed = f"Title: {title}\n\nAbstract: {abstract}"
-        chunks = chunk_text(text_to_embed)
+    # Try PySpark distributed execution
+    spark_success = False
+    embedded_chunks_count = 0
 
+    try:
+        from pyspark.sql import SparkSession
+        from pyspark.sql.functions import udf, explode, col
+        from pyspark.sql.types import ArrayType, StringType, StructType, StructField, IntegerType
+
+        spark = SparkSession.builder \
+            .appName("CapstoneSparkNativePipeline") \
+            .master("local[*]") \
+            .config("spark.driver.bindAddress", "127.0.0.1") \
+            .getOrCreate()
+
+        logger.info("PySpark session active. Parallelizing chunking and embedding across Spark partitions...")
+
+        # Create Spark RDD / DataFrame of papers
+        rdd = spark.sparkContext.parallelize(papers_list)
+
+        def process_paper_partition(paper_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+            p_id = paper_dict["paper_id"]
+            p_title = paper_dict["title"]
+            p_abstract = paper_dict["abstract"]
+            text_to_embed = f"Title: {p_title}\n\nAbstract: {p_abstract}"
+            chunks = chunk_text(text_to_embed)
+
+            result = []
+            for idx, c_str in enumerate(chunks):
+                vec = generate_embedding(c_str)
+                result.append({
+                    "paper_id": p_id,
+                    "chunk_index": idx,
+                    "chunk_text": c_str,
+                    "embedding": vec,
+                    "model_name": MODEL_NAME,
+                    "created_at": now_iso
+                })
+            return result
+
+        # Distributed flatMap across Spark partitions
+        embeddings_rdd = rdd.flatMap(process_paper_partition)
+        all_embeddings = embeddings_rdd.collect()
+
+        if all_embeddings:
+            embedded_chunks_count = insert_paper_embeddings(all_embeddings)
+        spark_success = True
+        logger.info(f"PySpark distributed pipeline completed: stored {embedded_chunks_count} vector chunks.")
+    except Exception as e:
+        logger.info(f"PySpark distributed pipeline fallback ({e}); using Python batch processor.")
+
+    if not spark_success:
         embeddings_batch = []
-        for idx, chunk_str in enumerate(chunks):
-            vector_vec = generate_embedding(chunk_str)
-            embeddings_batch.append({
-                "paper_id": paper_id,
-                "chunk_index": idx,
-                "chunk_text": chunk_str,
-                "embedding": vector_vec,
-                "model_name": MODEL_NAME,
-                "created_at": now_iso
-            })
+        for paper in papers_list:
+            p_id = paper["paper_id"]
+            text_to_embed = f"Title: {paper['title']}\n\nAbstract: {paper['abstract']}"
+            chunks = chunk_text(text_to_embed)
+            for idx, chunk_str in enumerate(chunks):
+                vector_vec = generate_embedding(chunk_str)
+                embeddings_batch.append({
+                    "paper_id": p_id,
+                    "chunk_index": idx,
+                    "chunk_text": chunk_str,
+                    "embedding": vector_vec,
+                    "model_name": MODEL_NAME,
+                    "created_at": now_iso
+                })
 
-        count = insert_paper_embeddings(embeddings_batch)
-        embedded_chunks_count += count
+        embedded_chunks_count = insert_paper_embeddings(embeddings_batch)
+        logger.info(f"Python batch pipeline completed: stored {embedded_chunks_count} vector chunks.")
 
-    logger.info(f"Successfully processed {len(papers_list)} papers and stored {embedded_chunks_count} vector chunks.")
     return embedded_chunks_count
 
 

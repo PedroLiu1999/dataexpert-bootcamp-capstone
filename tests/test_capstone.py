@@ -50,6 +50,7 @@ def test_openalex_abstract_reconstruction():
 
 def test_openalex_client_search():
     client = OpenAlexClient()
+    client._cache.clear()
 
     mock_openalex_response = {
         "results": [
@@ -70,7 +71,7 @@ def test_openalex_client_search():
         ]
     }
 
-    with patch("requests.get") as mock_get:
+    with patch.object(client.session, "get") as mock_get:
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.json.return_value = mock_openalex_response
@@ -163,3 +164,87 @@ def test_agent_tools_and_orchestrator():
     # Test Action: Track progress
     res_prog = agent.process_user_request("Mark Quantum Optimization paper as completed")
     assert "progress" in res_prog["response"].lower() or "completed" in res_prog["response"].lower()
+
+
+def test_idempotent_embeddings_upsert():
+    from src.db.repository import insert_paper_embeddings, _MOCK_EMBEDDINGS
+    init_db()
+
+    data_v1 = [{
+        "paper_id": "W_IDEM_1",
+        "chunk_index": 0,
+        "chunk_text": "Original text v1",
+        "embedding": [0.1] * 384,
+        "model_name": "all-MiniLM-L6-v2",
+        "created_at": "2026-08-08T00:00:00Z"
+    }]
+    insert_paper_embeddings(data_v1)
+
+    data_v2 = [{
+        "paper_id": "W_IDEM_1",
+        "chunk_index": 0,
+        "chunk_text": "Updated text v2",
+        "embedding": [0.2] * 384,
+        "model_name": "all-MiniLM-L6-v2",
+        "created_at": "2026-08-08T00:01:00Z"
+    }]
+    insert_paper_embeddings(data_v2)
+
+    # Verify no duplicate entries created for (paper_id, chunk_index)
+    matches = [e for e in _MOCK_EMBEDDINGS if e["paper_id"] == "W_IDEM_1" and e["chunk_index"] == 0]
+    assert len(matches) == 1
+    assert matches[0]["chunk_text"] == "Updated text v2"
+
+
+def test_openalex_retry_and_backoff():
+    client = OpenAlexClient(max_retries=2, backoff_factor=0.01)
+
+    # Test 429 rate limit fallback
+    with patch.object(client.session, "get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_get.return_value = mock_resp
+
+        res = client.search_works("retry test", limit=2)
+        assert res == []
+        assert mock_get.called
+
+    # Test caching behavior
+    client_cached = OpenAlexClient()
+    with patch.object(client_cached.session, "get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"results": [{"id": "W11", "title": "Cached Title"}]}
+        mock_get.return_value = mock_resp
+
+        # First call fetches via session.get
+        res1 = client_cached.search_works("caching query", limit=2)
+        assert len(res1) == 1
+        assert res1[0]["title"] == "Cached Title"
+        assert mock_get.call_count == 1
+
+        # Second call returns cached data without calling session.get
+        res2 = client_cached.search_works("caching query", limit=2)
+        assert len(res2) == 1
+        assert res2[0]["title"] == "Cached Title"
+        assert mock_get.call_count == 1
+
+
+def test_delta_cdf_analytics():
+    from src.analytics.delta_cdf import cdf_tracker
+
+    user_id = "test-user-cdf"
+    cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_generate_sequenced_reading_plan"})
+    cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_add_paper_to_collection"})
+    cdf_tracker.log_event("progress_update", user_id, {"paper_id": "W1", "status": "completed"})
+    cdf_tracker.log_event("progress_update", user_id, {"paper_id": "W2", "status": "in_progress"})
+
+    analytics = cdf_tracker.get_cdf_analytics(user_id=user_id)
+    assert analytics["plans_generated"] >= 1
+    assert analytics["papers_added"] >= 1
+    assert analytics["completed_reading_count"] >= 1
+    assert analytics["completion_rate_pct"] == 50.0
+    assert analytics["cdf_enabled"] is True
+
+
+

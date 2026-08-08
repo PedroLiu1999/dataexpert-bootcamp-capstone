@@ -347,12 +347,30 @@ def insert_paper_embeddings(embeddings_data: List[Dict[str, Any]]) -> int:
         return 0
 
     if not is_postgres_available():
-        _MOCK_EMBEDDINGS.extend(embeddings_data)
-        return len(embeddings_data)
+        inserted_count = 0
+        for item in embeddings_data:
+            p_id = item["paper_id"]
+            c_idx = item["chunk_index"]
+            # Upsert into mock storage
+            updated = False
+            for idx, existing in enumerate(_MOCK_EMBEDDINGS):
+                if existing["paper_id"] == p_id and existing["chunk_index"] == c_idx:
+                    _MOCK_EMBEDDINGS[idx] = item
+                    updated = True
+                    break
+            if not updated:
+                _MOCK_EMBEDDINGS.append(item)
+            inserted_count += 1
+        return inserted_count
 
     insert_sql = """
         INSERT INTO paper_embeddings (paper_id, chunk_index, chunk_text, embedding, model_name, created_at)
-        VALUES (%s, %s, %s, %s::vector, %s, %s);
+        VALUES (%s, %s, %s, %s::vector, %s, %s)
+        ON CONFLICT (paper_id, chunk_index) DO UPDATE SET
+            chunk_text = EXCLUDED.chunk_text,
+            embedding = EXCLUDED.embedding,
+            model_name = EXCLUDED.model_name,
+            created_at = EXCLUDED.created_at;
     """
     tuples = [
         (

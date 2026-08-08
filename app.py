@@ -15,8 +15,14 @@ load_dotenv()
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from src.agent.research_agent import ResearchAgent
-from src.agent.tools import tool_search_openalex_papers
+from src.agent.tools import (
+    tool_add_paper_to_collection,
+    tool_search_openalex_papers,
+    tool_track_reading_progress,
+)
+from src.analytics.delta_cdf import cdf_tracker
 from src.db.repository import (
+    add_paper_to_collection,
     create_collection,
     create_learning_goal,
     create_user,
@@ -80,7 +86,7 @@ st.markdown("""
         font-weight: 600;
     }
 </style>
-""", unsafe_allow_headers=True)
+""", unsafe_allow_html=True)
 
 # Initialize database schema
 init_db()
@@ -98,15 +104,16 @@ agent = ResearchAgent(user_id=user_id)
 st.markdown("""
 <div class="header-card">
     <h1>🎓 Academic Research & Study Plan Assistant</h1>
-    <p>Discover papers via OpenAlex API, build Lakebase collections, sequence study plans, and converse with an AI Agent.</p>
+    <p>Discover papers via OpenAlex API, build Lakebase collections, sequence study plans, and analyze Delta CDF metrics.</p>
 </div>
-""", unsafe_allow_headers=True)
+""", unsafe_allow_html=True)
 
 # Main Navigation Tabs
-tab_discover, tab_collections, tab_agent = st.tabs([
+tab_discover, tab_collections, tab_agent, tab_analytics = st.tabs([
     "🎯 Learning Goals & Paper Discovery",
     "📚 Collections & Sequenced Study Plan",
-    "🤖 AI Research Assistant Chatbot"
+    "🤖 AI Research Assistant Chatbot",
+    "📊 Analytics & Delta CDF Dashboard"
 ])
 
 # --- Tab 1: Discovery ---
@@ -130,17 +137,31 @@ with tab_discover:
         if search_query.strip():
             with st.spinner("Querying OpenAlex API & running PySpark batch ingestion..."):
                 papers = tool_search_openalex_papers(search_query, limit=6)
+                st.session_state["search_results"] = papers
+                cdf_tracker.log_event("paper_search", user_id, {"query": search_query, "count": len(papers)})
                 st.success(f"Ingested & embedded {len(papers)} papers into Lakebase!")
 
-                for p in papers:
-                    st.markdown(f"""
-                    <div class="paper-card">
-                        <h3>{p['title']} <span class="badge">{p.get('publication_year', 'N/A')}</span></h3>
-                        <p><strong>Citations:</strong> {p.get('citation_count', 0)} | <strong>Topics:</strong> {p.get('topics', 'General')}</p>
-                        <p>{p['abstract'][:300]}...</p>
-                        {f'<a href="{p["open_access_url"]}" target="_blank">🔗 Read Open Access PDF</a>' if p.get('open_access_url') else ''}
-                    </div>
-                    """, unsafe_allow_headers=True)
+    if "search_results" in st.session_state:
+        for p in st.session_state["search_results"]:
+            st.markdown(f"""
+            <div class="paper-card">
+                <h3>{p['title']} <span class="badge">{p.get('publication_year', 'N/A')}</span></h3>
+                <p><strong>Citations:</strong> {p.get('citation_count', 0)} | <strong>Topics:</strong> {p.get('topics', 'General')}</p>
+                <p>{p['abstract'][:300]}...</p>
+                {f'<a href="{p["open_access_url"]}" target="_blank">🔗 Read Open Access PDF</a>' if p.get('open_access_url') else ''}
+            </div>
+            """, unsafe_allow_html=True)
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                if st.button(f"➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
+                    tool_add_paper_to_collection(user_id, "General Research", p["paper_id"])
+                    cdf_tracker.log_event("paper_added", user_id, {"paper_id": p["paper_id"], "collection": "General Research"})
+                    st.toast(f"Added '{p['title'][:30]}...' to collection!")
+            with c2:
+                if st.button(f"📖 Track Reading Progress", key=f"track_{p['paper_id']}"):
+                    update_reading_progress(user_id, p["paper_id"], status="in_progress")
+                    cdf_tracker.log_event("progress_update", user_id, {"paper_id": p["paper_id"], "status": "in_progress"})
+                    st.toast(f"Marked '{p['title'][:30]}...' as In Progress!")
 
 # --- Tab 2: Collections & Study Plan ---
 with tab_collections:
@@ -161,7 +182,7 @@ with tab_collections:
                 <h4>{p['title']} ({p.get('publication_year', 'N/A')})</h4>
                 <p>{p['abstract'][:250]}...</p>
             </div>
-            """, unsafe_allow_headers=True)
+            """, unsafe_allow_html=True)
 
     st.divider()
     st.subheader("Reading Progress & Sequence")
@@ -177,6 +198,7 @@ with tab_collections:
                 new_status = st.selectbox("Status", ["unread", "in_progress", "completed"], index=["unread", "in_progress", "completed"].index(rp.get("status", "unread")), key=f"status_{rp['progress_id']}")
                 if new_status != rp.get("status"):
                     update_reading_progress(user_id, rp["paper_id"], status=new_status, sequence_order=rp["sequence_order"])
+                    cdf_tracker.log_event("progress_update", user_id, {"paper_id": rp["paper_id"], "status": new_status})
                     st.rerun()
 
 # --- Tab 3: AI Research Agent Chatbot ---
@@ -204,6 +226,37 @@ with tab_agent:
                 ans = agent_res["response"]
                 if agent_res.get("actions_taken"):
                     ans += "\n\n**Agent Tool Actions Executed:**\n" + "\n".join(f"- `{act}`" for act in agent_res["actions_taken"])
+                    for act in agent_res["actions_taken"]:
+                        cdf_tracker.log_event("tool_call", user_id, {"action": act, "intent": agent_res.get("intent")})
 
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})
+
+# --- Tab 4: Analytics & Delta CDF Dashboard ---
+with tab_analytics:
+    st.subheader("📊 Databricks Delta Change Data Feed (CDF) Metrics & Tool History")
+    st.caption("Real-time operational change metrics tracked via Delta CDF (`tblproperties ('delta.enableChangeDataFeed' = 'true')`)")
+
+    analytics_data = cdf_tracker.get_cdf_analytics(user_id=user_id)
+
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Total CDF Events", analytics_data["total_events_logged"])
+    m2.metric("Plans Generated", analytics_data["plans_generated"])
+    m3.metric("Papers Added", analytics_data["papers_added"])
+    m4.metric("Completion Rate", f"{analytics_data['completion_rate_pct']}%")
+
+    st.divider()
+    st.subheader("Agent Tool Execution Counts")
+    if analytics_data["tool_call_counts"]:
+        st.bar_chart(analytics_data["tool_call_counts"])
+    else:
+        st.info("No tool executions recorded yet. Interact with the AI agent to log activity!")
+
+    st.divider()
+    st.subheader("Delta CDF Change Feed Log")
+    from src.analytics.delta_cdf import _IN_MEMORY_EVENT_LOG
+    if _IN_MEMORY_EVENT_LOG:
+        st.dataframe(_IN_MEMORY_EVENT_LOG, use_container_width=True)
+    else:
+        st.info("No event change feed records present.")
+

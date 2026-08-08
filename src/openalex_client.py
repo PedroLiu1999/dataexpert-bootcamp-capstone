@@ -6,6 +6,8 @@ Reconstructs abstracts from OpenAlex abstract_inverted_index representation.
 import logging
 from typing import Any, Dict, List, Optional
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +38,45 @@ def reconstruct_abstract(inverted_index: Optional[Dict[str, List[int]]]) -> str:
 
 
 class OpenAlexClient:
-    def __init__(self, user_agent: str = USER_AGENT, timeout: float = 10.0):
+    def __init__(self, user_agent: str = USER_AGENT, timeout: float = 10.0, max_retries: int = 3, backoff_factor: float = 1.0):
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         self.timeout = timeout
+        self._cache: Dict[str, List[Dict[str, Any]]] = {}
+
+        # Set up HTTP session with exponential backoff retry strategy
+        self.session = requests.Session()
+        self.session.headers.update(self.headers)
+        retries = Retry(
+            total=max_retries,
+            backoff_factor=backoff_factor,
+            status_forcelist=[429, 500, 502, 503, 504],
+            raise_on_status=False
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def search_works(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
         Searches OpenAlex works matching search query.
-        Returns normalized list of paper dictionaries.
+        Returns normalized list of paper dictionaries. Includes caching & exponential backoff.
         """
         if not query or not query.strip():
             return []
 
-        url = f"{OPENALEX_BASE_URL}?search={requests.utils.quote(query.strip())}&per-page={min(50, limit)}"
+        clean_query = query.strip()
+        cache_key = f"{clean_query.lower()}::{limit}"
+        if cache_key in self._cache:
+            logger.info(f"Returning cached OpenAlex results for query: '{clean_query}'")
+            return self._cache[cache_key]
+
+        url = f"{OPENALEX_BASE_URL}?search={requests.utils.quote(clean_query)}&per-page={min(50, limit)}"
         try:
-            resp = requests.get(url, headers=self.headers, timeout=self.timeout)
-            if resp.status_code != 200:
+            resp = self.session.get(url, timeout=self.timeout)
+            if resp.status_code == 429:
+                logger.warning("OpenAlex API rate limit exceeded (HTTP 429). Retries exhausted or backoff active.")
+                return []
+            elif resp.status_code != 200:
                 logger.error(f"OpenAlex API search failed ({resp.status_code}): {resp.text}")
                 return []
 
@@ -113,6 +138,7 @@ class OpenAlexClient:
                     "authors": authors
                 })
 
+                self._cache[cache_key] = normalized_papers
             return normalized_papers
         except Exception as e:
             logger.error(f"Error querying OpenAlex API: {e}")

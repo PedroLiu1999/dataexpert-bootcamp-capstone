@@ -222,7 +222,8 @@ CREATE TABLE IF NOT EXISTS paper_embeddings (
     chunk_text TEXT NOT NULL,
     embedding vector(384) NOT NULL,
     model_name VARCHAR(128) NOT NULL,
-    created_at VARCHAR(64) NOT NULL
+    created_at VARCHAR(64) NOT NULL,
+    CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
 );
 
 CREATE INDEX IF NOT EXISTS idx_paper_embeddings_hnsw 
