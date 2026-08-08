@@ -1,0 +1,19 @@
+command:
+  - "streamlit"
+  - "run"
+  - "app.py"
+
+env:
+  - name: "PYTHONUNBUFFERED"
+    value: "1"
+  - name: "SECRET_SCOPE"
+    value: "capstone_secrets"
+  - name: "SECRET_KEY"
+    value: "lakebase_url"
+
+resources:
+  - name: "lakebase_url"
+    secret:
+      scope: "capstone_secrets"
+      key: "lakebase_url"
+      permission: "CAN_READ"

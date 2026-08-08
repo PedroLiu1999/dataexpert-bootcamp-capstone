@@ -1,0 +1,68 @@
+# Databricks Asset Bundle Configuration for Capstone Academic Research & Study Plan Assistant
+
+bundle:
+  name: capstone-app
+
+resources:
+  postgres_projects:
+    capstone_lakebase_project:
+      project_id: 'capstone-lakebase'
+      display_name: 'Capstone Research Lakebase'
+      pg_version: 17
+
+  postgres_branches:
+    dev_branch:
+      parent: ${resources.postgres_projects.capstone_lakebase_project.id}
+      branch_id: 'dev'
+      no_expiry: true
+
+  postgres_endpoints:
+    dev_endpoint:
+      parent: ${resources.postgres_branches.dev_branch.id}
+      endpoint_id: 'primary'
+      endpoint_type: 'ENDPOINT_TYPE_READ_WRITE'
+      autoscaling_limit_min_cu: 0.5
+      autoscaling_limit_max_cu: 2
+      replace_existing: true
+
+  apps:
+    capstone_app:
+      name: capstone-research-app
+      source_code_path: .
+
+  jobs:
+    paper_spark_ingestion_job:
+      name: capstone-spark-paper-ingestion
+      schedule:
+        quartz_cron_expression: "0 0 */2 * * ?"
+        timezone_id: "UTC"
+      tasks:
+        - task_key: run_spark_paper_ingestion
+          spark_python_task:
+            python_file: src/spark_pipeline.py
+          environment_key: default
+
+      environments:
+        - environment_key: default
+          spec:
+            client: "3"
+            dependencies:
+              - "streamlit>=1.61.1"
+              - "pyspark>=4.2.0"
+              - "psycopg2-binary>=2.9.12"
+              - "pgvector>=0.5.0"
+              - "sentence-transformers>=5.7.0"
+              - "requests>=2.34.2"
+              - "sqlalchemy>=2.0.51"
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+
+  prod:
+    mode: production
+    workspace:
+      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
