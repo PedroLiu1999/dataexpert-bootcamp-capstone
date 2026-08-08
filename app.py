@@ -7,9 +7,11 @@ collection management, sequenced study plan generator, and AI research agent cha
 import os
 import sys
 import streamlit as st
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 # Ensure current working directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
