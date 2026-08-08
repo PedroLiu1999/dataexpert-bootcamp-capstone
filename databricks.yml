@@ -22,7 +22,7 @@ resources:
       endpoint_id: 'primary'
       endpoint_type: 'ENDPOINT_TYPE_READ_WRITE'
       autoscaling_limit_min_cu: 0.5
-      autoscaling_limit_max_cu: 2
+      autoscaling_limit_max_cu: 1
       replace_existing: true
 
   apps:
