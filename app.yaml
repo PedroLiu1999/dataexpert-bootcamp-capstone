@@ -6,12 +6,17 @@ command:
 env:
   - name: "PYTHONUNBUFFERED"
     value: "1"
+  - name: "LAKEBASE_USE_OAUTH"
+    value: "true"
   - name: "SECRET_SCOPE"
     value: "capstone_secrets"
   - name: "SECRET_KEY"
     value: "lakebase_url"
 
 resources:
+  - name: "lakebase_db"
+    postgres_endpoint:
+      permission: "CAN_CONNECT"
   - name: "lakebase_url"
     secret:
       scope: "capstone_secrets"

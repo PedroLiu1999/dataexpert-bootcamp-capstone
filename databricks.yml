@@ -29,6 +29,13 @@ resources:
     capstone_app:
       name: capstone-research-app
       source_code_path: .
+      resources:
+        - name: lakebase_db
+          postgres:
+            endpoint_id: ${resources.postgres_endpoints.dev_endpoint.id}
+            permission: CAN_CONNECT
+
+
 
   jobs:
     paper_spark_ingestion_job:

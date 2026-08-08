@@ -12,6 +12,8 @@ from typing import Any, Generator, Optional
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+import urllib.parse
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,13 +35,72 @@ def _decode_if_base64(val: str) -> str:
     return val_str
 
 
+def get_oauth_lakebase_url() -> Optional[str]:
+    """
+    Generates a PostgreSQL connection URL authenticated via Service Principal OAuth 2.0 token.
+    Programmatically resolves host, user, and database from Databricks Apps bound environment variables.
+    """
+    use_oauth = (os.getenv("LAKEBASE_USE_OAUTH", "").lower() == "true")
+    host = os.getenv("LAKEBASE_HOST") or os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or os.getenv("DATABRICKS_POSTGRES_HOST")
+    user = os.getenv("LAKEBASE_USER") or os.getenv("PGUSER") or os.getenv("POSTGRES_USER") or os.getenv("DATABRICKS_CLIENT_ID")
+    db = os.getenv("LAKEBASE_DB") or os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB") or "capstone_lakebase"
+    port = os.getenv("LAKEBASE_PORT") or os.getenv("PGPORT") or "5432"
+
+    if not (use_oauth or (host and user)):
+        return None
+
+    if not host or not user:
+        logger.warning("Service Principal OAuth enabled but LAKEBASE_HOST or LAKEBASE_USER missing.")
+        return None
+
+    try:
+        from databricks.sdk import WorkspaceClient
+
+        w = WorkspaceClient()
+        token = None
+
+        # Try endpoint-scoped postgres credential first if endpoint path provided
+        endpoint_path = os.getenv("LAKEBASE_ENDPOINT_PATH")
+        if endpoint_path and hasattr(w, "postgres") and hasattr(w.postgres, "generate_database_credential"):
+            try:
+                cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
+                if cred and cred.token:
+                    token = cred.token
+            except Exception as e:
+                logger.debug(f"Failed to generate endpoint database credential: {e}")
+
+        # Fallback to workspace client M2M OAuth access token
+        if not token:
+            token_info = w.config.get_token()
+            if token_info and token_info.access_token:
+                token = token_info.access_token
+
+        if not token:
+            logger.warning("Could not acquire OAuth access token via Databricks SDK.")
+            return None
+
+        user_enc = urllib.parse.quote(user, safe="")
+        pass_enc = urllib.parse.quote(token, safe="")
+        url = f"postgresql://{user_enc}:{pass_enc}@{host}:{port}/{db}?sslmode=require"
+        logger.info(f"Successfully constructed Service Principal OAuth PostgreSQL URL for host '{host}'.")
+        return url
+    except Exception as e:
+        logger.warning(f"Error fetching Service Principal OAuth token for Lakebase: {e}")
+        return None
+
+
 def get_lakebase_url() -> Optional[str]:
     """
     Retrieves the Lakebase / PostgreSQL connection URL.
     Order of preference:
-    1. Environment variables: LAKEBASE_URL, DATABASE_URL, POSTGRES_URL.
-    2. Databricks Secret Scope (dbutils or databricks-sdk WorkspaceClient), decoding base64 if needed.
+    1. Service Principal OAuth token authentication (LAKEBASE_USE_OAUTH=true or host/user configured).
+    2. Explicit environment variables: LAKEBASE_URL, DATABASE_URL, POSTGRES_URL.
+    3. Databricks Secret Scope (dbutils or databricks-sdk WorkspaceClient), decoding base64 if needed.
     """
+    oauth_url = get_oauth_lakebase_url()
+    if oauth_url:
+        return oauth_url
+
     url = os.getenv("LAKEBASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
     if url:
         return _decode_if_base64(url)
