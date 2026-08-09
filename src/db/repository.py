@@ -486,25 +486,51 @@ def insert_paper_embeddings(embeddings_data: List[Dict[str, Any]]) -> int:
     return len(embeddings_data)
 
 
-def vector_search_papers(query_vector: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
+def vector_search_papers(
+    query_vector: List[float],
+    top_k: int = 5,
+    similarity_threshold: Optional[float] = 0.3,
+    collection_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     top_k = max(1, min(20, top_k))
     vec_str = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
 
-    query = text("""
-        SELECT p.paper_id, p.title, p.abstract, p.publication_year, p.citation_count, p.open_access_url,
-               pc.chunk_text, 1 - (pc.embedding <=> CAST(:vec AS vector)) AS similarity
-        FROM capstone.paper_chunks pc
-        JOIN capstone.papers p ON p.paper_id = pc.paper_id
-        ORDER BY pc.embedding <=> CAST(:vec AS vector) ASC
-        LIMIT :top_k;
-    """)
+    sql_str = """
+        WITH ranked_chunks AS (
+            SELECT DISTINCT ON (p.paper_id)
+                   p.paper_id, p.title, p.abstract, p.publication_year, p.citation_count, p.open_access_url,
+                   pc.chunk_text, 1 - (pc.embedding <=> CAST(:vec AS vector)) AS similarity
+            FROM capstone.paper_chunks pc
+            JOIN capstone.papers p ON p.paper_id = pc.paper_id
+    """
+    if collection_id:
+        sql_str += " JOIN capstone.collection_papers cp ON cp.paper_id = p.paper_id WHERE cp.collection_id = :collection_id "
+
+    sql_str += """
+            ORDER BY p.paper_id, (pc.embedding <=> CAST(:vec AS vector)) ASC
+        )
+        SELECT * FROM ranked_chunks
+    """
+
+    if similarity_threshold is not None:
+        sql_str += " WHERE similarity >= :min_sim "
+
+    sql_str += " ORDER BY similarity DESC LIMIT :top_k;"
+
+    query = text(sql_str)
+    params: Dict[str, Any] = {"vec": vec_str, "top_k": top_k}
+    if similarity_threshold is not None:
+        params["min_sim"] = float(similarity_threshold)
+    if collection_id:
+        params["collection_id"] = collection_id
 
     engine = get_engine()
     with engine.connect() as conn:
-        result = conn.execute(query, {"vec": vec_str, "top_k": top_k})
+        result = conn.execute(query, params)
         res = []
         for row in result.fetchall():
             d = dict(row._mapping)
             d["similarity"] = round(float(d["similarity"]), 4) if d.get("similarity") is not None else None
             res.append(d)
         return res
+

@@ -26,10 +26,12 @@ from src.db.repository import (
     get_user_notes,
     get_user_reading_progress,
     init_db,
+    insert_paper_embeddings,
     update_reading_progress,
     upsert_paper,
     vector_search_papers,
 )
+
 from src.openalex_client import OpenAlexClient, reconstruct_abstract
 from src.spark_pipeline import chunk_text, generate_embedding, process_and_embed_papers
 
@@ -168,8 +170,10 @@ def test_spark_pipeline_and_embeddings():
     count = process_and_embed_papers(mock_papers)
     assert count >= 1
 
-    search_res = vector_search_papers(vec, top_k=5)
+    quantum_vec = generate_embedding(mock_papers[0]["abstract"])
+    search_res = vector_search_papers(quantum_vec, top_k=5)
     assert len(search_res) >= 1
+
 
 
 def test_agent_tools_and_orchestrator():
@@ -350,4 +354,46 @@ def test_user_identity_isolation():
     assert alice_colls[0]["name"] == "Alice Collection"
     assert len(bob_colls) == 1
     assert bob_colls[0]["name"] == "Bob Collection"
+
+
+def test_vector_search_similarity_threshold_filtering():
+    init_db()
+    upsert_paper("W_NO_MATCH", "Orthogonal Paper", "Physics abstract")
+    insert_paper_embeddings([{
+        "paper_id": "W_NO_MATCH",
+        "chunk_index": 0,
+        "chunk_text": "Physics passage",
+        "embedding": [1.0] + [0.0] * 383,
+        "model_name": "all-MiniLM-L6-v2"
+    }])
+
+    # Search with an orthogonal query vector and high threshold (0.99)
+    query_vec = [0.0] * 383 + [1.0]
+    results = vector_search_papers(query_vec, top_k=5, similarity_threshold=0.99)
+    assert len(results) == 0
+
+
+def test_vector_search_distinct_paper_deduplication():
+    init_db()
+    upsert_paper("W_MULTI_CHUNK", "Multi Chunk Paper", "Long paper abstract")
+    chunks = [
+        {"paper_id": "W_MULTI_CHUNK", "chunk_index": 0, "chunk_text": "Chunk 0", "embedding": [0.5] * 384},
+        {"paper_id": "W_MULTI_CHUNK", "chunk_index": 1, "chunk_text": "Chunk 1", "embedding": [0.51] * 384},
+        {"paper_id": "W_MULTI_CHUNK", "chunk_index": 2, "chunk_text": "Chunk 2", "embedding": [0.49] * 384},
+    ]
+    insert_paper_embeddings(chunks)
+
+    results = vector_search_papers([0.5] * 384, top_k=5, similarity_threshold=0.1)
+    matching = [r for r in results if r["paper_id"] == "W_MULTI_CHUNK"]
+    # DISTINCT ON (paper_id) ensures exactly 1 row returned per paper
+    assert len(matching) == 1
+
+
+def test_long_document_multi_chunking():
+    long_abstract = "Graph Neural Networks (GNNs) represent a powerful class of deep learning models designed for non-Euclidean domain data. " * 45
+    assert len(long_abstract) > 4000
+
+    chunks = chunk_text(long_abstract, chunk_size=800, chunk_overlap=100)
+    assert len(chunks) >= 4
+
 
