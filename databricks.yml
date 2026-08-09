@@ -6,9 +6,10 @@ bundle:
 resources:
   postgres_projects:
     capstone_lakebase_project:
-      project_id: 'capstone-lakebase'
+      project_id: 'capstone-lakebase-app'
       display_name: 'Capstone Research Lakebase'
       pg_version: 17
+
 
   postgres_branches:
     dev_branch:
