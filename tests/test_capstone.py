@@ -26,7 +26,7 @@ from src.db.repository import (
 )
 
 from src.openalex_client import OpenAlexClient, reconstruct_abstract
-from src.spark_pipeline import chunk_text, generate_embedding, process_and_embed_papers
+from src.embedding import chunk_text, generate_embedding, process_and_embed_papers
 
 
 def test_openalex_abstract_reconstruction():
@@ -142,7 +142,7 @@ def test_lakebase_repository_all_tables():
 
 
 @pytest.mark.integration
-def test_spark_pipeline_and_embeddings():
+def test_embedding_pipeline():
     test_text = "PySpark pipeline ingesting academic literature and vector embeddings."
     chunks = chunk_text(test_text, chunk_size=800)
     assert len(chunks) == 1

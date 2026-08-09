@@ -18,7 +18,7 @@ from src.db.repository import (
     vector_search_papers,
 )
 from src.openalex_client import OpenAlexClient
-from src.spark_pipeline import generate_embedding, process_and_embed_papers
+from src.embedding import generate_embedding, process_and_embed_papers
 
 logger = logging.getLogger(__name__)
 openalex_client = OpenAlexClient()

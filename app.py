@@ -1,6 +1,6 @@
 """
 Streamlit Web Application for Academic Research & Personalized Study Plan Assistant on Databricks Apps.
-Features OpenAlex paper discovery, Lakebase pgvector persistence, PySpark batch pipeline,
+Features OpenAlex paper discovery, Lakebase pgvector persistence, in-process embedding pipeline,
 collection management, sequenced study plan generator, and AI research agent chatbot.
 """
 
@@ -157,7 +157,7 @@ with tab_discover:
     search_query = st.text_input("Search Academic Papers (OpenAlex API)", placeholder="e.g. Transformers in Natural Language Processing")
     if st.button("Search & Ingest Papers", type="primary"):
         if search_query.strip():
-            with st.spinner("Querying OpenAlex API & running PySpark batch ingestion..."):
+            with st.spinner("Querying OpenAlex API & embedding papers into Lakebase..."):
                 papers = tool_search_openalex_papers(search_query, limit=6)
                 st.session_state["search_results"] = papers
                 cdf_tracker.log_event("paper_search", user_id, {"query": search_query, "count": len(papers)})
