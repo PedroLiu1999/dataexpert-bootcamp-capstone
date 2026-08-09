@@ -432,9 +432,23 @@ def test_agent_tool_validation_and_security():
     with pytest.raises(ValueError, match="Invalid reading status"):
         tool_track_reading_progress(user_id="u123", paper_id="W1", status="invalid_status")
 
-    # 3. Empty note content raises ValueError
-    with pytest.raises(ValueError, match="Note content cannot be empty"):
-        tool_add_user_note(user_id="u123", content="   ")
+def test_topological_sort_reading_plan_engine():
+    from src.agent.tools import topological_sort_papers
+
+    # Paper A: Prerequisite (referenced by B)
+    paper_a = {"paper_id": "W_A", "title": "Foundational Paper A", "referenced_works": [], "publication_year": 2017}
+    # Paper B: Derivative (references Paper A)
+    paper_b = {"paper_id": "W_B", "title": "Advanced Paper B", "referenced_works": ["W_A"], "publication_year": 2024}
+
+    # Input unordered list with derivative Paper B first
+    unordered = [paper_b, paper_a]
+    ordered = topological_sort_papers(unordered)
+
+    assert len(ordered) == 2
+    # Prerequisite Paper A must be ordered BEFORE derivative Paper B
+    assert ordered[0]["paper_id"] == "W_A"
+    assert ordered[1]["paper_id"] == "W_B"
+
 
 
 

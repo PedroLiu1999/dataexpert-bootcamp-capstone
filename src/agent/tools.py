@@ -100,29 +100,78 @@ def tool_track_reading_progress(
     return {"status": "success", "progress": res}
 
 
+def topological_sort_papers(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Orders candidate papers such that prerequisite papers (referenced by other candidate papers)
+    appear BEFORE dependent papers in the reading plan sequence.
+    """
+    if not papers:
+        return []
+
+    paper_map = {p["paper_id"]: p for p in papers}
+    paper_ids = set(paper_map.keys())
+
+    # Build graph: edge A -> B means A is referenced by B (so A must be read BEFORE B)
+    in_degree = {pid: 0 for pid in paper_ids}
+    adj = {pid: [] for pid in paper_ids}
+
+    for pid, paper in paper_map.items():
+        refs = paper.get("referenced_works") or []
+        for ref_id in refs:
+            clean_ref_id = str(ref_id).split("/")[-1]
+            if clean_ref_id in paper_ids and clean_ref_id != pid:
+                adj[clean_ref_id].append(pid)
+                in_degree[pid] += 1
+
+    from collections import deque
+    queue = deque([pid for pid in paper_ids if in_degree[pid] == 0])
+
+    if not queue:
+        return sorted(papers, key=lambda p: (p.get("publication_year") or 2000, -p.get("citation_count", 0)))
+
+    ordered_pids = []
+    while queue:
+        curr = queue.popleft()
+        ordered_pids.append(curr)
+        for neighbor in adj[curr]:
+            in_degree[neighbor] -= 1
+            if in_degree[neighbor] == 0:
+                queue.append(neighbor)
+
+    remaining = [pid for pid in paper_ids if pid not in ordered_pids]
+    remaining.sort(key=lambda pid: (paper_map[pid].get("publication_year") or 2000, -paper_map[pid].get("citation_count", 0)))
+    ordered_pids.extend(remaining)
+
+    return [paper_map[pid] for pid in ordered_pids]
+
+
 def tool_generate_sequenced_reading_plan(user_id: str, goal_title: str) -> List[Dict[str, Any]]:
-    """Tool: Constructs a sequenced reading plan for a learning goal using RAG paper evidence."""
+    """Tool: Constructs a topological-sorted sequenced reading plan for a learning goal."""
     validate_tool_call("tool_generate_sequenced_reading_plan", {"goal_title": goal_title}, user_id=user_id)
     logger.info("[Agent Tool] Generating sequenced reading plan for goal: '%s'", goal_title)
     papers = tool_search_openalex_papers(goal_title, limit=5)
     if not papers:
         papers = tool_vector_search_papers(goal_title, top_k=5)
 
+    # Perform topological sort ordering foundational prerequisite papers first
+    ordered_papers = topological_sort_papers(papers)
+
     sequenced_plan = []
-    for idx, paper in enumerate(papers):
+    for idx, paper in enumerate(ordered_papers):
         seq_num = idx + 1
         p_id = paper["paper_id"]
         update_reading_progress(user_id=user_id, paper_id=p_id, status="unread" if idx > 0 else "in_progress", sequence_order=seq_num)
+        abstract_str = paper.get("abstract") or ""
         sequenced_plan.append({
             "step": seq_num,
             "paper_id": p_id,
             "title": paper["title"],
-            "abstract": paper["abstract"][:250] + "..." if len(paper.get("abstract", "")) > 250 else paper.get("abstract", ""),
+            "abstract": abstract_str[:250] + "..." if len(abstract_str) > 250 else abstract_str,
             "citation_count": paper.get("citation_count", 0),
             "open_access_url": paper.get("open_access_url"),
             "status": "in_progress" if idx == 0 else "unread",
         })
     return sequenced_plan
+
 
 
 def tool_add_user_note(
