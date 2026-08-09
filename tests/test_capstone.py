@@ -8,10 +8,6 @@ from unittest.mock import patch, MagicMock
 import pytest
 from src.agent.research_agent import ResearchAgent
 from src.agent.tools import (
-    tool_add_paper_to_collection,
-    tool_add_user_note,
-    tool_generate_sequenced_reading_plan,
-    tool_search_openalex_papers,
     tool_track_reading_progress,
 )
 from src.db.repository import (
@@ -22,9 +18,6 @@ from src.db.repository import (
     create_user,
     get_collection_papers,
     get_user_collections,
-    get_user_learning_goals,
-    get_user_notes,
-    get_user_reading_progress,
     init_db,
     insert_paper_embeddings,
     update_reading_progress,
@@ -347,8 +340,9 @@ def test_user_identity_isolation():
 
     assert u1["user_id"] != u2["user_id"]
 
-    c1 = create_collection(u1["user_id"], "Alice Collection")
-    c2 = create_collection(u2["user_id"], "Bob Collection")
+    create_collection(u1["user_id"], "Alice Collection")
+    create_collection(u2["user_id"], "Bob Collection")
+
 
     alice_colls = get_user_collections(u1["user_id"])
     bob_colls = get_user_collections(u2["user_id"])
@@ -416,7 +410,8 @@ def test_schema_constraints_and_hnsw_index():
 
     # 2. Verify Foreign Key Cascade Delete
     user = create_user("cascade_test@test.com", "Cascade User")
-    coll = create_collection(user["user_id"], "Cascade Collection")
+    create_collection(user["user_id"], "Cascade Collection")
+
 
     colls = get_user_collections(user["user_id"])
     assert len(colls) == 1
@@ -425,7 +420,7 @@ def test_schema_constraints_and_hnsw_index():
         conn.execute(text("DELETE FROM capstone.users WHERE user_id = :uid;"), {"uid": user["user_id"]})
 
 def test_agent_tool_validation_and_security():
-    from src.agent.tools import validate_tool_call, tool_track_reading_progress, tool_add_user_note
+    from src.agent.tools import validate_tool_call
 
     # 1. Invalid or missing user_id raises ValueError
     with pytest.raises(ValueError, match="Invalid or missing user_id context"):

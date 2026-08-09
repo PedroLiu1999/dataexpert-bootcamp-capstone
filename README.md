@@ -1,37 +1,48 @@
 # Capstone Project: Academic Research & Personalized Study Plan Assistant
 
-An end-to-end academic research discovery, vector embedding, and personalized study plan sequencing system built with **OpenAlex API**, **PySpark Data Ingestion Pipeline**, **Lakebase (Postgres + pgvector)**, **Autonomous AI Research Agent**, and **Streamlit / Databricks Apps**.
+An end-to-end academic research discovery, vector embedding, and personalized study plan sequencing system built for **Databricks Apps** with **OpenAlex API**, **Serverless PySpark Ingestion Pipeline**, **Lakebase (PostgreSQL + pgvector)**, **Autonomous AI Research Agent**, and **Streamlit UI**.
 
 ---
 
-## 1. Architecture & Capstone Requirements Coverage
+## 1. Architecture & Core Components
 
-- **Spark Data Pipeline**: `src/spark_pipeline.py` runs PySpark batch transformations to clean raw OpenAlex paper metadata, chunk text, compute 384-dimensional vector embeddings, and write structured records into Lakebase pgvector.
-- **Third-Party API Integration**: `src/openalex_client.py` connects to OpenAlex (`https://api.openalex.org/works`) for works, authors, institutions, topics, citations, and inverted index abstract reconstruction.
-- **Processing Unstructured Data**: Text abstracts and student notes are vector-embedded using `sentence-transformers/all-MiniLM-L6-v2` (384-dim) for multi-paper RAG evidence retrieval.
-- **9 Required Lakebase Domain Tables**:
-  - `users`: User accounts and profiles.
-  - `learning_goals`: Target topics, objectives, and target levels.
-  - `papers`: Academic works metadata (DOI, title, abstract, citations, open-access link).
-  - `authors`: Researcher details and affiliations.
-  - `paper_authors`: Many-to-many paper author links.
-  - `collections`: User paper libraries.
-  - `collection_papers`: Papers saved to collections.
-  - `reading_progress`: Sequenced paper reading status (`unread`, `in_progress`, `completed`).
-  - `notes`: Student study notes.
-  - `paper_embeddings`: 384-dim vector embeddings with HNSW cosine distance index (`CREATE INDEX ... USING hnsw (embedding vector_cosine_ops)`).
-- **AI Agent Capabilities**:
-  - `tool_search_openalex_papers`: Live API research search.
-  - `tool_vector_search_papers`: RAG pgvector semantic search.
-  - `tool_add_paper_to_collection`: Database write action saving papers to collections.
-  - `tool_generate_sequenced_reading_plan`: Sequenced study plan generator.
-  - `tool_track_reading_progress`: Database write action tracking paper progress.
-  - `tool_add_user_note`: Database write action storing student study notes.
-- **Databricks App Frontend**: Streamlit UI ([app.py](file:///home/peter/databricks-ai-boot-camp/capstone/app.py)) with interactive tabs for learning goal discovery, collections, sequenced reading plan progress, and AI assistant chatbot.
+- **Lakebase PostgreSQL & Connection Pooling**:
+  - `src/db/connection.py`: Thread-safe OAuth database token rotation via `WorkspaceClient().postgres.generate_database_credential()` (`_CredentialCache`), process-wide pooled SQLAlchemy engine (`postgresql+psycopg://`, `pool_size=5`, `max_overflow=5`, `pool_recycle=1800`, `pool_pre_ping=True`).
+  - `migrations/001_init.sql`: Idempotent relational DDL schema bootstrap with `TIMESTAMPTZ` timestamps, foreign key `ON DELETE CASCADE` constraints, composite unique indexes, and `events` analytics storage.
+- **Serverless PySpark Data Ingestion Pipeline**:
+  - `src/spark_pipeline.py`: Distributed paper metadata ingestion and vector embedding pipeline. Uses `mapPartitions` for per-partition model loading (`sentence-transformers/all-MiniLM-L6-v2`, $N=384$ vector dimensions) without hardcoded Spark master strings, collecting batch records on the driver for atomic Lakebase transactional upserts.
+- **OpenAlex REST API Discovery Client**:
+  - `src/openalex_client.py`: High-throughput academic research search with `primary_location.landing_page_url` fallback, payload size optimization via `select=`, empty query result caching, and LRU cache eviction.
+- **Vector Search Precision & HNSW Index**:
+  - `src/db/repository.py`: `vector_search_papers` using `DISTINCT ON (paper_id)` deduplication, configurable similarity threshold filtering (`similarity_threshold=0.3`), and HNSW vector index (`idx_paper_chunks_embedding USING hnsw (embedding vector_cosine_ops)`).
+- **Pedagogical Sequenced Reading Plan Engine**:
+  - `src/agent/tools.py`: Constructs a directed citation graph ($G=(V,E)$) from `referenced_works` metadata and executes a topological sort to order foundational prerequisite papers before derivative advanced papers in student reading plans.
+- **Autonomous AI Research Agent**:
+  - `src/agent/research_agent.py`: Integrates with Databricks Foundation Model Serving endpoints (e.g. `databricks-meta-llama-3-3-70b-instruct`) with strict tool parameter type validation (`validate_tool_call`) and fallback intent orchestration.
+- **Persistent Event Analytics**:
+  - `src/analytics/delta_cdf.py`: Logs domain operational events (tool calls, progress updates, collection saves) into Lakebase `capstone.events` table for persistent real-time metrics tracking.
+- **Databricks Apps Streamlit Frontend**:
+  - `app.py`: Multi-tenant UI with native Streamlit components (`st.container(border=True)`, `st.link_button`), XSS sanitization, `@st.cache_resource` database schema bootstrap, and signed-in user identity extraction from request headers (`X-Forwarded-Email`).
 
 ---
 
-## 2. Quickstart & Execution
+## 2. Lakebase Domain Schema (9 Tables + Analytics)
+
+1. `users`: User profiles and identities (`user_id`, `email`, `full_name`, `role`).
+2. `learning_goals`: Student learning objectives and target levels.
+3. `papers`: Academic works metadata (DOI, title, abstract, citations, open-access link).
+4. `authors`: Researcher details and affiliations.
+5. `paper_authors`: Junction table linking papers to authors with position index.
+6. `collections`: User paper libraries.
+7. `collection_papers`: Papers saved to collections.
+8. `reading_progress`: Sequenced reading status (`unread`, `in_progress`, `completed`).
+9. `notes`: Student study notes linked to papers and learning goals.
+10. `paper_chunks`: Overlapping text passages with 384-dim vector embeddings and HNSW index.
+11. `events`: Persistent analytics audit log (`event_id`, `event_type`, `user_id`, `payload`).
+
+---
+
+## 3. Quickstart & Testing
 
 ### Local Environment Setup (`uv`)
 ```bash
@@ -39,9 +50,14 @@ cd /home/peter/databricks-ai-boot-camp/capstone
 uv sync
 ```
 
-### Run Automated Pytest Suite
+### Run Automated Pytest Suite (PostgreSQL Testcontainers)
 ```bash
 uv run pytest
+```
+
+### Validate Code Quality & Linting
+```bash
+uv run ruff check .
 ```
 
 ### Validate Databricks Asset Bundle
@@ -54,7 +70,7 @@ databricks bundle validate
 uv run streamlit run app.py
 ```
 
-### Deploy to Databricks
+### Deploy to Databricks Apps
 ```bash
 databricks bundle deploy --target dev
 ```
