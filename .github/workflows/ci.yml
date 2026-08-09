@@ -35,8 +35,8 @@ jobs:
       - name: Run unit tests
         run: uv run pytest -m "not integration"
 
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@main
+
       - name: Validate Databricks Asset Bundle
-        uses: databricks/setup-cli@v0.229.0
-        with:
-          version: "latest"
-      - run: databricks bundle validate -t dev
+        run: databricks bundle validate -t dev
