@@ -266,7 +266,9 @@ def test_openalex_retry_and_backoff():
 def test_delta_cdf_analytics():
     from src.analytics.delta_cdf import cdf_tracker
 
-    user_id = "test-user-cdf"
+    user = create_user("cdf_test@test.com", "CDF User")
+    user_id = user["user_id"]
+
     cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_generate_sequenced_reading_plan"})
     cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_add_paper_to_collection"})
     cdf_tracker.log_event("progress_update", user_id, {"paper_id": "W1", "status": "completed"})
@@ -278,6 +280,7 @@ def test_delta_cdf_analytics():
     assert analytics["completed_reading_count"] >= 1
     assert analytics["completion_rate_pct"] == 50.0
     assert analytics["cdf_enabled"] is True
+
 
 
 def test_persist_authorship_data():

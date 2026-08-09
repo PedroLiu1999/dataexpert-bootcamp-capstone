@@ -285,31 +285,27 @@ with tab_agent:
                 st.markdown(ans)
                 st.session_state.messages.append({"role": "assistant", "content": ans})
 
-# --- Tab 4: Analytics & Delta CDF Dashboard ---
+# --- Tab 4: Lakebase Event Analytics & Metrics Dashboard ---
 with tab_analytics:
-    st.subheader("📊 Databricks Delta Change Data Feed (CDF) Metrics & Tool History")
-    st.caption("Real-time operational change metrics tracked via Delta CDF (`tblproperties ('delta.enableChangeDataFeed' = 'true')`)")
+    st.subheader("📊 Lakebase Persistent Event Analytics & Metrics Dashboard")
+    st.caption("Real-time persistent operational change metrics tracked in Lakebase PostgreSQL `capstone.events` table.")
 
     analytics_data = cdf_tracker.get_cdf_analytics(user_id=user_id)
 
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Total CDF Events", analytics_data["total_events_logged"])
+    m1.metric("Total Events Logged", analytics_data["total_events_logged"])
     m2.metric("Plans Generated", analytics_data["plans_generated"])
     m3.metric("Papers Added", analytics_data["papers_added"])
     m4.metric("Completion Rate", f"{analytics_data['completion_rate_pct']}%")
 
     st.divider()
-    st.subheader("Agent Tool Execution Counts")
+    st.subheader("Agent Tool Execution Distribution")
     if analytics_data["tool_call_counts"]:
         st.bar_chart(analytics_data["tool_call_counts"])
     else:
         st.info("No tool executions recorded yet. Interact with the AI agent to log activity!")
 
     st.divider()
-    st.subheader("Delta CDF Change Feed Log")
-    from src.analytics.delta_cdf import _IN_MEMORY_EVENT_LOG
-    if _IN_MEMORY_EVENT_LOG:
-        st.dataframe(_IN_MEMORY_EVENT_LOG, use_container_width=True)
-    else:
-        st.info("No event change feed records present.")
+    st.caption("Storage Backend: `" + analytics_data.get("storage_backend", "Lakebase PostgreSQL Events Table") + "`")
+
 

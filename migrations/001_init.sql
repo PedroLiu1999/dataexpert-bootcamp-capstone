@@ -1,4 +1,4 @@
--- Capstone Minimal Schema Bootstrap & Identity Grants Migration
+-- Capstone Schema Bootstrap DDL with HNSW Index and Persistent Event Analytics Table
 -- Vector dimension N=384 per ADR (docs/ADR_EMBEDDING_MODEL.md)
 
 CREATE EXTENSION IF NOT EXISTS vector;
@@ -102,6 +102,15 @@ CREATE TABLE IF NOT EXISTS capstone.paper_chunks (
     model_name VARCHAR(128) DEFAULT 'sentence-transformers/all-MiniLM-L6-v2',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
+);
+
+-- Persistent Events Analytics Table
+CREATE TABLE IF NOT EXISTS capstone.events (
+    event_id BIGSERIAL PRIMARY KEY,
+    event_type VARCHAR(64) NOT NULL,
+    user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+    payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- HNSW Vector Index for Cosine Similarity

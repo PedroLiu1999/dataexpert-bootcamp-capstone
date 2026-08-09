@@ -112,9 +112,18 @@ def init_db() -> None:
         CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
     );
 
+    CREATE TABLE IF NOT EXISTS capstone.events (
+        event_id BIGSERIAL PRIMARY KEY,
+        event_type VARCHAR(64) NOT NULL,
+        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
     CREATE INDEX IF NOT EXISTS idx_paper_chunks_embedding
     ON capstone.paper_chunks USING hnsw (embedding vector_cosine_ops);
     """
+
 
     with engine.begin() as conn:
         conn.execute(text(ddl))
@@ -537,4 +546,89 @@ def vector_search_papers(
             d["similarity"] = round(float(d["similarity"]), 4) if d.get("similarity") is not None else None
             res.append(d)
         return res
+
+
+# --- Persistent Events & Analytics ---
+
+def log_analytics_event(event_type: str, user_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    import json
+
+    query = text("""
+        INSERT INTO capstone.events (event_type, user_id, payload)
+        VALUES (:event_type, :user_id, CAST(:payload AS jsonb))
+        RETURNING event_id, event_type, user_id, payload, created_at;
+    """)
+
+    engine = get_engine()
+    payload_str = json.dumps(payload)
+    with engine.begin() as conn:
+        result = conn.execute(query, {"event_type": event_type, "user_id": user_id, "payload": payload_str})
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"event_type": event_type, "user_id": user_id, "payload": payload}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
+
+
+def get_user_analytics_summary(user_id: Optional[str] = None) -> Dict[str, Any]:
+    import json
+
+    engine = get_engine()
+    if user_id:
+        sql = text("SELECT event_type, payload FROM capstone.events WHERE user_id = :user_id;")
+        params = {"user_id": user_id}
+    else:
+        sql = text("SELECT event_type, payload FROM capstone.events;")
+        params = {}
+
+    with engine.connect() as conn:
+        result = conn.execute(sql, params)
+        rows = result.fetchall()
+
+    total_events = len(rows)
+    plans_generated = 0
+    papers_added = 0
+    completed_count = 0
+    total_progress_events = 0
+    tool_counts: Dict[str, int] = {}
+
+    for row in rows:
+        d = dict(row._mapping)
+        e_type = d.get("event_type")
+        payload = d.get("payload") or {}
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except Exception:
+                payload = {}
+
+        if e_type == "tool_call":
+            t_name = payload.get("tool_name", "unknown_tool")
+            tool_counts[t_name] = tool_counts.get(t_name, 0) + 1
+            if t_name == "tool_generate_sequenced_reading_plan":
+                plans_generated += 1
+            elif t_name == "tool_add_paper_to_collection":
+                papers_added += 1
+
+        elif e_type in ("paper_added", "collection_add"):
+            papers_added += 1
+
+        elif e_type == "progress_update":
+            total_progress_events += 1
+            if payload.get("status") == "completed":
+                completed_count += 1
+
+    completion_rate = round((completed_count / total_progress_events * 100), 1) if total_progress_events > 0 else 0.0
+
+    return {
+        "total_events_logged": total_events,
+        "plans_generated": plans_generated,
+        "papers_added": papers_added,
+        "completed_reading_count": completed_count,
+        "completion_rate_pct": completion_rate,
+        "tool_call_counts": tool_counts,
+        "cdf_enabled": True,
+        "storage_backend": "Lakebase PostgreSQL Events Table",
+    }
+
 
