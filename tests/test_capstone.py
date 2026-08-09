@@ -397,3 +397,32 @@ def test_long_document_multi_chunking():
     assert len(chunks) >= 4
 
 
+def test_schema_constraints_and_hnsw_index():
+    from sqlalchemy import text
+    from src.db.connection import get_engine
+
+    init_db()
+    engine = get_engine()
+
+    # 1. Verify HNSW index exists in pg_indexes
+    with engine.connect() as conn:
+        res = conn.execute(text("SELECT indexname FROM pg_indexes WHERE schemaname = 'capstone' AND indexname = 'idx_paper_chunks_embedding';"))
+        row = res.fetchone()
+        assert row is not None
+        assert row[0] == "idx_paper_chunks_embedding"
+
+    # 2. Verify Foreign Key Cascade Delete
+    user = create_user("cascade_test@test.com", "Cascade User")
+    coll = create_collection(user["user_id"], "Cascade Collection")
+
+    colls = get_user_collections(user["user_id"])
+    assert len(colls) == 1
+
+    with engine.begin() as conn:
+        conn.execute(text("DELETE FROM capstone.users WHERE user_id = :uid;"), {"uid": user["user_id"]})
+
+    colls_after = get_user_collections(user["user_id"])
+    assert len(colls_after) == 0
+
+
+

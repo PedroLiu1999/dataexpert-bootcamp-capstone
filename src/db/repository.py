@@ -111,7 +111,11 @@ def init_db() -> None:
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
     );
+
+    CREATE INDEX IF NOT EXISTS idx_paper_chunks_embedding
+    ON capstone.paper_chunks USING hnsw (embedding vector_cosine_ops);
     """
+
     with engine.begin() as conn:
         conn.execute(text(ddl))
     logger.info("Lakebase database schema initialized successfully.")
