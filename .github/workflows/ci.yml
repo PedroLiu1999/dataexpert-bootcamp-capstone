@@ -39,4 +39,7 @@ jobs:
         uses: databricks/setup-cli@main
 
       - name: Validate Databricks Asset Bundle
-        run: databricks bundle validate -t dev
+        env:
+          DATABRICKS_HOST: "https://dummy.cloud.databricks.com"
+          DATABRICKS_TOKEN: "dummy-token-for-ci-syntax-validation"
+        run: databricks bundle validate
