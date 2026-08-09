@@ -28,7 +28,7 @@ Databricks Apps run in a standard serverless Python container without Java (`JAV
 ## Decision
 We adopt **Option 3 (Separated Dual-Path Execution)**:
 - **Interactive App Ingestion**: The Streamlit web application (`app.py`) imports `src.embedding`, performing sequential text chunking, `SentenceTransformer` vector encoding, and Lakebase upserts in-process. `pyspark` is completely removed from the App runtime container dependencies.
-- **Scheduled Distributed Batch Job**: Scheduled ingestion runs via `notebooks/spark_ingestion_pipeline.ipynb` on Databricks compute. `src/spark_pipeline.py` requires an active Spark session (`SparkSession.getActiveSession()`) and performs physical DataFrame cleaning (`clean_papers_df`) and distributed partition-level embedding (`mapInPandas`).
+- **Scheduled Distributed Batch Job**: Scheduled ingestion runs via `notebooks/spark_ingestion_pipeline.ipynb` on Databricks compute, performing physical DataFrame cleaning (`clean_papers_df`) and distributed partition-level embedding (`mapInPandas`).
 
 ## Consequences
 - **App Reliability**: Eliminates `PySparkRuntimeError` / `JAVA_GATEWAY_EXITED` crashes in Databricks Apps.
