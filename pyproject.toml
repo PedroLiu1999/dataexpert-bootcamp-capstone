@@ -1,16 +1,16 @@
 [project]
 name = "capstone"
 version = "0.1.0"
-description = "Add your description here"
+description = "Capstone Academic Research & Study Plan Assistant"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "databricks-sdk>=0.89.0",
     "httpx>=0.28.1",
     "pgvector>=0.5.0",
-    "psycopg2-binary>=2.9.12",
+    "psycopg[binary,pool]>=3.2",
     "pydantic>=2.13.4",
     "pyspark>=3.5.0",
-    "pytest>=9.1.1",
     "requests>=2.34.2",
     "sentence-transformers>=5.7.0",
     "sqlalchemy>=2.0.51",
@@ -18,6 +18,16 @@ dependencies = [
     "python-dotenv>=1.0.0",
 ]
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    "testcontainers[postgres]",
+]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
 

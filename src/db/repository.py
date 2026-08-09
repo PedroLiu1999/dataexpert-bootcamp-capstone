@@ -10,7 +10,11 @@ import logging
 import math
 import uuid
 from typing import Any, Dict, List, Optional
-from psycopg2.extras import execute_values
+try:
+    from psycopg2.extras import execute_values  # type: ignore
+except ImportError:
+    execute_values = None
+
 from src.db.connection import get_db_connection, is_postgres_available
 from src.db.models import CREATE_TABLES_SQL
 

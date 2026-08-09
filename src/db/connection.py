@@ -1,157 +1,152 @@
-"""
-Database connection management for Lakebase (PostgreSQL + pgvector).
-Supports Unity Catalog Secret Scope lookup, base64 connection URL decoding,
-and local in-memory fallback for testing environments.
-"""
+"""Lakebase (Postgres) connection management with OAuth credential rotation."""
 
-import base64
-from contextlib import contextmanager
+from __future__ import annotations
+
 import logging
 import os
-from typing import Any, Generator, Optional
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import threading
+import time
+from datetime import datetime
+from typing import Optional
 
-import urllib.parse
+from databricks.sdk import WorkspaceClient
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
 
+# Refresh this many seconds before the credential actually expires.
+_REFRESH_MARGIN_S = 300
+# Conservative assumed lifetime if the SDK gives an expiry we cannot parse.
+_ASSUMED_TTL_S = 2_700
 
-def _decode_if_base64(val: str) -> str:
-    """
-    Decodes base64 string if encoded, otherwise returns raw string.
-    """
+
+def _require(name: str) -> str:
+    val = os.environ.get(name)
     if not val:
-        return ""
-    val_str = val.strip()
-    if val_str.startswith("postgresql://") or val_str.startswith("postgres://"):
-        return val_str
-    try:
-        decoded = base64.b64decode(val_str).decode("utf-8").strip()
-        if decoded.startswith("postgresql://") or decoded.startswith("postgres://"):
-            return decoded
-    except Exception:
-        pass
-    return val_str
+        raise RuntimeError(
+            f"{name} is not set. In Databricks Apps this comes from the attached "
+            f"'postgres' resource; locally, export it (see docs/LAKEBASE_SETUP.md)."
+        )
+    return val
 
 
-def get_oauth_lakebase_url() -> Optional[str]:
+class _CredentialCache:
+    """Caches one database credential and refreshes it before expiry.
+
+    Thread-safe: Streamlit serves reruns on worker threads, and the pool may open
+    connections concurrently.
     """
-    Generates a PostgreSQL connection URL authenticated via Service Principal OAuth 2.0 token.
-    Programmatically resolves host, user, and database from Databricks Apps bound environment variables.
-    """
-    use_oauth = (os.getenv("LAKEBASE_USE_OAUTH", "").lower() == "true")
-    host = os.getenv("LAKEBASE_HOST") or os.getenv("PGHOST") or os.getenv("POSTGRES_HOST") or os.getenv("DATABRICKS_POSTGRES_HOST")
-    user = os.getenv("LAKEBASE_USER") or os.getenv("PGUSER") or os.getenv("POSTGRES_USER") or os.getenv("DATABRICKS_CLIENT_ID")
-    db = os.getenv("LAKEBASE_DB") or os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB") or "capstone_lakebase"
-    port = os.getenv("LAKEBASE_PORT") or os.getenv("PGPORT") or "5432"
 
-    if not (use_oauth or (host and user)):
-        return None
+    def __init__(self, endpoint: str) -> None:
+        self._endpoint = endpoint
+        self._client = WorkspaceClient()
+        self._lock = threading.Lock()
+        self._token: Optional[str] = None
+        self._expires_at: float = 0.0
 
-    if not host or not user:
-        logger.warning("Service Principal OAuth enabled but LAKEBASE_HOST or LAKEBASE_USER missing.")
-        return None
+    def token(self) -> str:
+        with self._lock:
+            if self._token is None or time.time() >= self._expires_at - _REFRESH_MARGIN_S:
+                logger.info("Minting Lakebase database credential for %s", self._endpoint)
+                cred = self._client.postgres.generate_database_credential(
+                    endpoint=self._endpoint
+                )
+                self._token = cred.token
+                self._expires_at = self._parse_expiry(cred.expire_time)
+            return self._token
 
-    try:
-        from databricks.sdk import WorkspaceClient
-
-        w = WorkspaceClient()
-        token = None
-
-        # Try endpoint-scoped postgres credential first if endpoint path provided
-        endpoint_path = os.getenv("LAKEBASE_ENDPOINT_PATH")
-        if endpoint_path and hasattr(w, "postgres") and hasattr(w.postgres, "generate_database_credential"):
-            try:
-                cred = w.postgres.generate_database_credential(endpoint=endpoint_path)
-                if cred and cred.token:
-                    token = cred.token
-            except Exception as e:
-                logger.debug(f"Failed to generate endpoint database credential: {e}")
-
-        # Fallback to workspace client M2M OAuth access token
-        if not token:
-            token_info = w.config.get_token()
-            if token_info and token_info.access_token:
-                token = token_info.access_token
-
-        if not token:
-            logger.warning("Could not acquire OAuth access token via Databricks SDK.")
-            return None
-
-        user_enc = urllib.parse.quote(user, safe="")
-        pass_enc = urllib.parse.quote(token, safe="")
-        url = f"postgresql://{user_enc}:{pass_enc}@{host}:{port}/{db}?sslmode=require"
-        logger.info(f"Successfully constructed Service Principal OAuth PostgreSQL URL for host '{host}'.")
-        return url
-    except Exception as e:
-        logger.warning(f"Error fetching Service Principal OAuth token for Lakebase: {e}")
-        return None
+    @staticmethod
+    def _parse_expiry(expire_time: object) -> float:
+        try:
+            if isinstance(expire_time, datetime):
+                return expire_time.timestamp()
+            if isinstance(expire_time, str):
+                return datetime.fromisoformat(
+                    expire_time.replace("Z", "+00:00")
+                ).timestamp()
+            seconds = getattr(expire_time, "seconds", None)
+            if seconds:
+                return float(seconds)
+        except Exception:  # noqa: BLE001
+            logger.warning("Could not parse credential expiry; assuming %ss", _ASSUMED_TTL_S)
+        return time.time() + _ASSUMED_TTL_S
 
 
-def get_lakebase_url() -> Optional[str]:
-    """
-    Retrieves the Lakebase / PostgreSQL connection URL.
-    Order of preference:
-    1. Service Principal OAuth token authentication (LAKEBASE_USE_OAUTH=true or host/user configured).
-    2. Explicit environment variables: LAKEBASE_URL, DATABASE_URL, POSTGRES_URL.
-    3. Databricks Secret Scope (dbutils or databricks-sdk WorkspaceClient), decoding base64 if needed.
-    """
-    oauth_url = get_oauth_lakebase_url()
-    if oauth_url:
-        return oauth_url
+_engine: Engine | None = None
+_engine_lock = threading.Lock()
 
-    url = os.getenv("LAKEBASE_URL") or os.getenv("DATABASE_URL") or os.getenv("POSTGRES_URL")
-    if url:
-        return _decode_if_base64(url)
 
-    scope = os.getenv("SECRET_SCOPE", "capstone_secrets")
-    key = os.getenv("SECRET_KEY", "lakebase_url")
+def get_engine() -> Engine:
+    """Return the process-wide SQLAlchemy engine. Safe to call repeatedly."""
+    global _engine
+    if _engine is not None:
+        return _engine
 
-    # Try dbutils inside Databricks Runtime / Apps
-    try:
-        import dbutils  # type: ignore
-        val = dbutils.secrets.get(scope=scope, key=key)
-        if val:
-            return _decode_if_base64(val)
-    except Exception:
-        pass
+    with _engine_lock:
+        if _engine is not None:
+            return _engine
 
-    # Try Databricks SDK WorkspaceClient
-    try:
-        from databricks.sdk import WorkspaceClient
-        w = WorkspaceClient()
-        resp = w.secrets.get_secret(scope=scope, key=key)
-        if resp and resp.value:
-            return _decode_if_base64(resp.value)
-    except Exception:
-        pass
+        # Single escape hatch for local testing against explicit connection URL
+        lakebase_url = os.environ.get("LAKEBASE_URL")
+        if lakebase_url:
+            logger.info("Connecting to Lakebase using LAKEBASE_URL environment override")
+            _engine = create_engine(
+                lakebase_url,
+                pool_size=5,
+                max_overflow=5,
+                pool_recycle=1_800,
+                pool_pre_ping=True,
+            )
+            return _engine
 
-    return None
+        host = _require("PGHOST")
+        user = _require("PGUSER")
+        database = os.environ.get("PGDATABASE", "databricks_postgres")
+        port = os.environ.get("PGPORT", "5432")
+        sslmode = os.environ.get("PGSSLMODE", "require")
+        schema = os.environ.get("PGSCHEMA", "capstone")
+
+        engine = create_engine(
+            f"postgresql+psycopg://{user}@{host}:{port}/{database}?sslmode={sslmode}",
+            pool_size=5,
+            max_overflow=5,
+            pool_recycle=1_800,
+            pool_pre_ping=True,
+            connect_args={
+                "application_name": os.environ.get("PGAPPNAME", "capstone-app"),
+                "connect_timeout": 15,
+                "options": f"-c search_path={schema},public",
+            },
+        )
+
+        credentials = _CredentialCache(_require("PGENDPOINT"))
+
+        @event.listens_for(engine, "do_connect")
+        def _inject_credential(dialect, conn_rec, cargs, cparams):  # noqa: ANN001
+            cparams["password"] = credentials.token()
+
+        _engine = engine
+        return _engine
 
 
 def is_postgres_available() -> bool:
-    lakebase_url = get_lakebase_url()
-    if not lakebase_url:
-        return False
+    """Interim compatibility check using pooled engine. Deleted in T05."""
     try:
-        conn = psycopg2.connect(lakebase_url, connect_timeout=3)
-        conn.close()
-        return True
+        engine = get_engine()
+        with engine.connect():
+            return True
     except Exception:
         return False
 
 
+from contextlib import contextmanager
+from typing import Generator, Any
+
 @contextmanager
 def get_db_connection() -> Generator[Any, None, None]:
-    """
-    Context manager yielding a psycopg2 connection with RealDictCursor.
-    """
-    lakebase_url = get_lakebase_url()
-    if not lakebase_url:
-        raise ValueError("Lakebase connection URL is not configured.")
-    conn = psycopg2.connect(lakebase_url, cursor_factory=RealDictCursor)
-    try:
+    """Interim compatibility context manager using pooled engine. Deleted in T05."""
+    engine = get_engine()
+    with engine.connect() as conn:
         yield conn
-    finally:
-        conn.close()
+

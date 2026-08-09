@@ -259,51 +259,32 @@ def test_persist_authorship_data():
     assert len(_MOCK_PAPER_AUTHORS) >= 1
 
 
-def test_lakebase_oauth_url_generation():
-    from src.db.connection import get_oauth_lakebase_url, get_lakebase_url
 
-    env_mock = {
-        "LAKEBASE_USE_OAUTH": "true",
-        "LAKEBASE_HOST": "ep-test-host.cloud.databricks.com",
-        "LAKEBASE_USER": "test-sp-client-id@databricks",
-        "LAKEBASE_DB": "test_db",
-        "LAKEBASE_PORT": "5432",
-    }
+def test_connection_engine_missing_env():
+    import pytest
+    from src.db.connection import get_engine, _CredentialCache
+
+    with patch.dict("os.environ", {}, clear=True):
+        with pytest.raises(RuntimeError, match="PGHOST is not set"):
+            get_engine()
+
+
+def test_credential_cache_minting():
+    from src.db.connection import _CredentialCache
 
     mock_ws = MagicMock()
-    mock_token_info = MagicMock()
-    mock_token_info.access_token = "mock_oauth_token_12345"
-    mock_ws.config.get_token.return_value = mock_token_info
+    mock_cred = MagicMock()
+    mock_cred.token = "mock_token_abc123"
+    mock_cred.expire_time = "2030-01-01T00:00:00Z"
+    mock_ws.postgres.generate_database_credential.return_value = mock_cred
 
-    mock_sdk = MagicMock()
-    mock_sdk.WorkspaceClient.return_value = mock_ws
-
-    mock_databricks = MagicMock()
-    mock_databricks.sdk = mock_sdk
-
-    with patch.dict("os.environ", env_mock, clear=True):
-        with patch.dict("sys.modules", {"databricks": mock_databricks, "databricks.sdk": mock_sdk}):
-            url = get_oauth_lakebase_url()
-            assert url is not None
-            assert "postgresql://test-sp-client-id%40databricks:mock_oauth_token_12345@ep-test-host.cloud.databricks.com:5432/test_db?sslmode=require" in url
-
-            # Verify get_lakebase_url prefers OAuth URL when configured
-            lakebase_url = get_lakebase_url()
-            assert lakebase_url == url
-
-
-
-
-def test_lakebase_oauth_fallback():
-    from src.db.connection import get_oauth_lakebase_url, get_lakebase_url
-
-    # When no OAuth env vars or flags are set, get_oauth_lakebase_url returns None
-    with patch.dict("os.environ", {}, clear=True):
-        assert get_oauth_lakebase_url() is None
-
-    # Falls back to LAKEBASE_URL environment variable if set
-    with patch.dict("os.environ", {"LAKEBASE_URL": "postgresql://user:pass@host:5432/db"}, clear=True):
-        assert get_lakebase_url() == "postgresql://user:pass@host:5432/db"
+    with patch("src.db.connection.WorkspaceClient", return_value=mock_ws):
+        cache = _CredentialCache("projects/test/branches/dev/endpoints/primary")
+        token = cache.token()
+        assert token == "mock_token_abc123"
+        mock_ws.postgres.generate_database_credential.assert_called_once_with(
+            endpoint="projects/test/branches/dev/endpoints/primary"
+        )
 
 
 
