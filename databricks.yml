@@ -33,8 +33,11 @@ resources:
         - name: postgres
           postgres:
             branch: ${resources.postgres_branches.dev_branch.id}
-            database: databricks_postgres
+            database: ${resources.postgres_branches.dev_branch.id}/databases/databricks-postgres
             permission: CAN_CONNECT_AND_CREATE
+
+
+
 
 
 
