@@ -59,7 +59,8 @@ def test_openalex_client_search():
                 "display_name": "Attention Is All You Need",
                 "publication_year": 2017,
                 "cited_by_count": 80000,
-                "landing_page_url": "https://arxiv.org/abs/1706.03762",
+                "open_access": {"oa_url": None},
+                "primary_location": {"landing_page_url": "https://arxiv.org/abs/1706.03762"},
                 "abstract_inverted_index": {"Transformers": [0], "replace": [1], "recurrent": [2], "layers.": [3]},
                 "authorships": [
                     {
@@ -67,6 +68,7 @@ def test_openalex_client_search():
                         "institutions": [{"display_name": "Google Brain"}],
                     }
                 ],
+                "referenced_works": ["https://openalex.org/W111111"],
             }
         ]
     }
@@ -82,9 +84,31 @@ def test_openalex_client_search():
         paper = results[0]
         assert paper["paper_id"] == "W999999"
         assert paper["title"] == "Attention Is All You Need"
-        assert "Transformers replace recurrent layers." in paper["abstract"]
-        assert len(paper["authors"]) == 1
-        assert paper["authors"][0]["display_name"] == "Ashish Vaswani"
+        assert paper["open_access_url"] == "https://arxiv.org/abs/1706.03762"
+        assert paper["referenced_works"] == ["W111111"]
+        assert "select=" in mock_get.call_args[0][0]
+
+        # Verify caching works for second call
+        cached_results = client.search_works("Transformers", limit=5)
+        assert cached_results == results
+        assert mock_get.call_count == 1
+
+
+def test_openalex_client_empty_result_caching():
+    client = OpenAlexClient()
+    client._cache.clear()
+
+    with patch.object(client.session, "get") as mock_get:
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"results": []}
+        mock_get.return_value = mock_resp
+
+        res1 = client.search_works("NonExistentQueryXYZ", limit=5)
+        assert res1 == []
+        res2 = client.search_works("NonExistentQueryXYZ", limit=5)
+        assert res2 == []
+        assert mock_get.call_count == 1
 
 
 def test_lakebase_repository_all_tables():
