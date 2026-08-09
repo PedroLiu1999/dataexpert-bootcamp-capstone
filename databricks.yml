@@ -51,7 +51,7 @@ resources:
       tasks:
         - task_key: run_spark_paper_ingestion
           notebook_task:
-            notebook_path: ./notebooks/spark_ingestion_pipeline.py
+            notebook_path: ./notebooks/spark_ingestion_pipeline.ipynb
             base_parameters:
               search_query: "Graph Neural Networks for Drug Discovery"
               limit: "25"

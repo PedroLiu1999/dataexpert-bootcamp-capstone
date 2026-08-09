@@ -9,6 +9,6 @@ env:
   # PGENDPOINT is NOT injected. It is the resource name of the compute endpoint and is
   # required by generate_database_credential().
   - name: PGENDPOINT
-    value: "projects/capstone-lakebase/branches/dev/endpoints/primary"
+    valueFrom: postgres
   - name: PGSCHEMA
     value: "capstone"
