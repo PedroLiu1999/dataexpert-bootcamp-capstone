@@ -5,13 +5,18 @@ build/
 dist/
 wheels/
 *.egg-info
+*.log
 
-# Virtual environments
+# Environment and Credential files
+.env
+.env.*
+.databricks/
+
+# Virtual environments & test caches
 .venv
 .pytest_cache/
 .delta_cdf_events/
+.scratch/
 
 .agents/
 skills-lock.json
-
-
