@@ -59,3 +59,21 @@ export PGSCHEMA="capstone"
 
 uv run streamlit run app.py
 ```
+
+---
+
+## 4. GitHub Actions CI Secrets Configuration (`gh` CLI)
+
+To configure workspace credentials for GitHub Actions CI bundle validation:
+
+```bash
+# 1. Set Databricks Workspace Host
+gh secret set DATABRICKS_HOST --repo PedroLiu1999/dataexpert-bootcamp-capstone --body "https://dbc-117d1e6a-753a.cloud.databricks.com"
+
+# 2. Set Databricks OAuth Access Token
+gh secret set DATABRICKS_TOKEN --repo PedroLiu1999/dataexpert-bootcamp-capstone --body "$(databricks auth token | jq -r .access_token)"
+
+# 3. List GitHub Repository Secrets
+gh secret list --repo PedroLiu1999/dataexpert-bootcamp-capstone
+```
+

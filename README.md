@@ -74,3 +74,18 @@ uv run streamlit run app.py
 ```bash
 databricks bundle deploy --target dev
 ```
+
+### GitHub Actions CI/CD Secrets Setup (`gh` CLI)
+To configure workspace authentication secrets for GitHub Actions CI bundle validation:
+
+```bash
+# 1. Set Databricks Workspace Host URL
+gh secret set DATABRICKS_HOST --repo PedroLiu1999/dataexpert-bootcamp-capstone --body "https://dbc-117d1e6a-753a.cloud.databricks.com"
+
+# 2. Set Databricks Authentication Token
+gh secret set DATABRICKS_TOKEN --repo PedroLiu1999/dataexpert-bootcamp-capstone --body "$(databricks auth token | jq -r .access_token)"
+
+# 3. Verify Repository Secrets
+gh secret list --repo PedroLiu1999/dataexpert-bootcamp-capstone
+```
+
