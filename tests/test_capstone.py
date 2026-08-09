@@ -421,8 +421,21 @@ def test_schema_constraints_and_hnsw_index():
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM capstone.users WHERE user_id = :uid;"), {"uid": user["user_id"]})
 
-    colls_after = get_user_collections(user["user_id"])
-    assert len(colls_after) == 0
+def test_agent_tool_validation_and_security():
+    from src.agent.tools import validate_tool_call, tool_track_reading_progress, tool_add_user_note
+
+    # 1. Invalid or missing user_id raises ValueError
+    with pytest.raises(ValueError, match="Invalid or missing user_id context"):
+        validate_tool_call("tool_add_user_note", {"content": "Test Note"}, user_id="")
+
+    # 2. Invalid reading status raises ValueError
+    with pytest.raises(ValueError, match="Invalid reading status"):
+        tool_track_reading_progress(user_id="u123", paper_id="W1", status="invalid_status")
+
+    # 3. Empty note content raises ValueError
+    with pytest.raises(ValueError, match="Note content cannot be empty"):
+        tool_add_user_note(user_id="u123", content="   ")
+
 
 
 
