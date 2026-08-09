@@ -179,7 +179,7 @@ class ResearchAgent:
                 "status": "success"
             })
 
-            lines = [f"💡 *Agent Rationale*: {rationale}\n", f"### Research Synthesis & Multi-Paper Evidence Analysis\n"]
+            lines = [f"💡 *Agent Rationale*: {rationale}\n", "### Research Synthesis & Multi-Paper Evidence Analysis\n"]
             for idx, p in enumerate(rag_results):
                 c_num = idx + 1
                 sim = p.get("similarity", 0.85)

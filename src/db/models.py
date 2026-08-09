@@ -226,6 +226,6 @@ CREATE TABLE IF NOT EXISTS paper_embeddings (
     CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
 );
 
-CREATE INDEX IF NOT EXISTS idx_paper_embeddings_hnsw 
+CREATE INDEX IF NOT EXISTS idx_paper_embeddings_hnsw
 ON paper_embeddings USING hnsw (embedding vector_cosine_ops);
 """

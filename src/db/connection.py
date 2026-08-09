@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import logging
 import os
 import threading
 import time
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Generator, Any
 
 from databricks.sdk import WorkspaceClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
+
 
 logger = logging.getLogger(__name__)
 
@@ -140,13 +142,11 @@ def is_postgres_available() -> bool:
         return False
 
 
-from contextlib import contextmanager
-from typing import Generator, Any
-
 @contextmanager
 def get_db_connection() -> Generator[Any, None, None]:
     """Interim compatibility context manager using pooled engine. Deleted in T05."""
     engine = get_engine()
     with engine.connect() as conn:
         yield conn
+
 

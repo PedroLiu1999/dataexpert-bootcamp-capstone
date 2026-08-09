@@ -155,13 +155,13 @@ with tab_discover:
             """, unsafe_allow_html=True)
             c1, c2 = st.columns([1, 1])
             with c1:
-                if st.button(f"➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
+                if st.button("➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
                     tool_add_paper_to_collection(user_id, "General Research", p["paper_id"])
                     cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_add_paper_to_collection", "paper_id": p["paper_id"], "collection": "General Research"})
                     cdf_tracker.log_event("paper_added", user_id, {"paper_id": p["paper_id"], "collection": "General Research"})
                     st.toast(f"Added '{p['title'][:30]}...' to collection!")
             with c2:
-                if st.button(f"📖 Track Reading Progress", key=f"track_{p['paper_id']}"):
+                if st.button("📖 Track Reading Progress", key=f"track_{p['paper_id']}"):
                     update_reading_progress(user_id, p["paper_id"], status="in_progress")
                     cdf_tracker.log_event("progress_update", user_id, {"paper_id": p["paper_id"], "status": "in_progress"})
                     st.toast(f"Marked '{p['title'][:30]}...' as In Progress!")

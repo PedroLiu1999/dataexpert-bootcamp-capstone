@@ -16,7 +16,7 @@ def main() -> None:
         version = conn.execute(text("SELECT version();")).scalar()
         user = conn.execute(text("SELECT current_user;")).scalar()
         schema = conn.execute(text("SELECT current_schema();")).scalar()
-        
+
         vector_ver = conn.execute(
             text("SELECT extversion FROM pg_extension WHERE extname = 'vector';")
         ).scalar()
