@@ -30,10 +30,11 @@ resources:
       name: capstone-research-app
       source_code_path: .
       resources:
-        - name: lakebase_db
+        - name: postgres
           postgres:
-            endpoint_id: ${resources.postgres_endpoints.dev_endpoint.id}
-            permission: CAN_CONNECT
+            branch: ${resources.postgres_branches.dev_branch.id}
+            database: databricks_postgres
+            permission: CAN_CONNECT_AND_CREATE
 
 
 

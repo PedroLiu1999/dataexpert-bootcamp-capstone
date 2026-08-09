@@ -1,24 +1,14 @@
-command:
-  - "streamlit"
-  - "run"
-  - "app.py"
+command: ["streamlit", "run", "app.py", "--server.port", "8000", "--server.address", "0.0.0.0"]
 
 env:
-  - name: "PYTHONUNBUFFERED"
+  - name: PYTHONUNBUFFERED
     value: "1"
-  - name: "LAKEBASE_USE_OAUTH"
-    value: "true"
-  - name: "SECRET_SCOPE"
-    value: "capstone_secrets"
-  - name: "SECRET_KEY"
-    value: "lakebase_url"
-
-resources:
-  - name: "lakebase_db"
-    postgres_endpoint:
-      permission: "CAN_CONNECT"
-  - name: "lakebase_url"
-    secret:
-      scope: "capstone_secrets"
-      key: "lakebase_url"
-      permission: "CAN_READ"
+  # PGHOST / PGPORT / PGDATABASE / PGUSER / PGSSLMODE / PGAPPNAME are injected
+  # automatically by the attached 'postgres' resource. Do not set them here.
+  #
+  # PGENDPOINT is NOT injected. It is the resource name of the compute endpoint and is
+  # required by generate_database_credential().
+  - name: PGENDPOINT
+    value: "projects/capstone-lakebase/branches/dev/endpoints/primary"
+  - name: PGSCHEMA
+    value: "capstone"
