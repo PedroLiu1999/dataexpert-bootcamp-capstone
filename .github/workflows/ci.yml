@@ -32,8 +32,12 @@ jobs:
       - name: Run Ruff check
         run: uv run ruff check .
 
+      - name: Run Mypy static type check
+        run: uv run mypy src/db src/agent src/analytics src/openalex_client.py
+
       - name: Run unit tests
         run: uv run pytest -m "not integration"
+
 
       - name: Install Databricks CLI
         uses: databricks/setup-cli@main

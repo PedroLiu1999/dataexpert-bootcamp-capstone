@@ -7,9 +7,9 @@ import pytest
 from testcontainers.postgres import PostgresContainer
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest.fixture(scope="session")
 def postgres_container():
-    """Spins up a Postgres container with pgvector for the test session."""
+    """Spins up a Postgres container with pgvector for database integration tests."""
     # If explicit LAKEBASE_URL or PGHOST is set, use existing database
     if os.environ.get("LAKEBASE_URL") or os.environ.get("PGHOST"):
         import src.db.connection as conn_mod
@@ -21,7 +21,7 @@ def postgres_container():
         yield None
         return
 
-    # Use pgvector container for test suite
+    # Use pgvector container for integration tests
     container = PostgresContainer("pgvector/pgvector:pg17")
     container.start()
 
@@ -42,3 +42,10 @@ def postgres_container():
     init_db()
     yield container
     container.stop()
+
+
+@pytest.fixture(autouse=True)
+def _auto_db_integration(request):
+    """Triggers postgres_container fixture only for tests decorated with @pytest.mark.integration."""
+    if "integration" in request.node.keywords:
+        request.getfixturevalue("postgres_container")

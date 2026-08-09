@@ -26,10 +26,14 @@ openalex_client = OpenAlexClient()
 VALID_PROGRESS_STATUSES = {"unread", "in_progress", "completed"}
 
 
-def validate_tool_call(tool_name: str, kwargs: Dict[str, Any], user_id: str) -> None:
-    """Validates parameter types, ranges, and user identity context before tool execution."""
+def validate_tool_call(tool_name: str, kwargs: Dict[str, Any], user_id: str, session_user_id: Optional[str] = None) -> None:
+    """Validates parameter types, ranges, and user identity authorization context before tool execution."""
     if not user_id or not isinstance(user_id, str) or not user_id.strip():
         raise ValueError(f"Unauthorized tool call '{tool_name}': Invalid or missing user_id context.")
+
+    if session_user_id and user_id != session_user_id:
+        raise ValueError(f"Authorization error in '{tool_name}': user_id '{user_id}' does not match authenticated session identity '{session_user_id}'.")
+
 
     if tool_name == "tool_search_openalex_papers":
         limit = kwargs.get("limit", 5)
@@ -112,7 +116,7 @@ def topological_sort_papers(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
     # Build graph: edge A -> B means A is referenced by B (so A must be read BEFORE B)
     in_degree = {pid: 0 for pid in paper_ids}
-    adj = {pid: [] for pid in paper_ids}
+    adj: Dict[str, List[str]] = {pid: [] for pid in paper_ids}
 
     for pid, paper in paper_map.items():
         refs = paper.get("referenced_works") or []
@@ -123,7 +127,10 @@ def topological_sort_papers(papers: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 in_degree[pid] += 1
 
     from collections import deque
-    queue = deque([pid for pid in paper_ids if in_degree[pid] == 0])
+
+    # Deterministic tie-breaker ordering by publication year then paper_id
+    paper_ids_sorted = sorted(paper_ids, key=lambda k: (paper_map[k].get("publication_year") or 0, k))
+    queue = deque([pid for pid in paper_ids_sorted if in_degree[pid] == 0])
 
     if not queue:
         return sorted(papers, key=lambda p: (p.get("publication_year") or 2000, -p.get("citation_count", 0)))

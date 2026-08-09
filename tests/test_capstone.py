@@ -106,7 +106,9 @@ def test_openalex_client_empty_result_caching():
         assert mock_get.call_count == 1
 
 
+@pytest.mark.integration
 def test_lakebase_repository_all_tables():
+
     init_db()
 
     # 1. User
@@ -139,6 +141,7 @@ def test_lakebase_repository_all_tables():
     assert note["content"] == "Interesting node message passing mechanism."
 
 
+@pytest.mark.integration
 def test_spark_pipeline_and_embeddings():
     test_text = "PySpark pipeline ingesting academic literature and vector embeddings."
     chunks = chunk_text(test_text, chunk_size=800)
@@ -168,7 +171,7 @@ def test_spark_pipeline_and_embeddings():
     assert len(search_res) >= 1
 
 
-
+@pytest.mark.integration
 def test_agent_tools_and_orchestrator():
     user = create_user("agent_test@test.com", "Agent Tester")
     agent = ResearchAgent(user_id=user["user_id"])
@@ -187,31 +190,37 @@ def test_agent_tools_and_orchestrator():
     assert "progress" in res_prog["response"].lower() or "completed" in res_prog["response"].lower()
 
 
+@pytest.mark.integration
 def test_idempotent_embeddings_upsert():
     from src.db.repository import insert_paper_embeddings, upsert_paper, vector_search_papers
+
     init_db()
 
     upsert_paper("W_IDEM_1", "Idempotent Test Paper", "Abstract text")
 
-    data_v1 = [{
-        "paper_id": "W_IDEM_1",
-        "chunk_index": 0,
-        "chunk_text": "Original text v1",
-        "embedding": [0.1] * 384,
-        "model_name": "all-MiniLM-L6-v2",
-        "created_at": "2026-08-08T00:00:00Z"
-    }]
+    data_v1 = [
+        {
+            "paper_id": "W_IDEM_1",
+            "chunk_index": 0,
+            "chunk_text": "Original text v1",
+            "embedding": [0.1] * 384,
+            "model_name": "all-MiniLM-L6-v2",
+            "created_at": "2026-08-08T00:00:00Z",
+        }
+    ]
     count1 = insert_paper_embeddings(data_v1)
     assert count1 == 1
 
-    data_v2 = [{
-        "paper_id": "W_IDEM_1",
-        "chunk_index": 0,
-        "chunk_text": "Updated text v2",
-        "embedding": [0.2] * 384,
-        "model_name": "all-MiniLM-L6-v2",
-        "created_at": "2026-08-08T00:01:00Z"
-    }]
+    data_v2 = [
+        {
+            "paper_id": "W_IDEM_1",
+            "chunk_index": 0,
+            "chunk_text": "Updated text v2",
+            "embedding": [0.2] * 384,
+            "model_name": "all-MiniLM-L6-v2",
+            "created_at": "2026-08-08T00:01:00Z",
+        }
+    ]
     count2 = insert_paper_embeddings(data_v2)
     assert count2 == 1
 
@@ -219,7 +228,6 @@ def test_idempotent_embeddings_upsert():
     idem_match = [m for m in matches if m["paper_id"] == "W_IDEM_1"]
     assert len(idem_match) == 1
     assert idem_match[0]["chunk_text"] == "Updated text v2"
-
 
 
 def test_openalex_retry_and_backoff():
@@ -256,6 +264,7 @@ def test_openalex_retry_and_backoff():
         assert mock_get.call_count == 1
 
 
+@pytest.mark.integration
 def test_delta_cdf_analytics():
     from src.analytics.delta_cdf import cdf_tracker
 
@@ -275,7 +284,7 @@ def test_delta_cdf_analytics():
     assert analytics["cdf_enabled"] is True
 
 
-
+@pytest.mark.integration
 def test_persist_authorship_data():
     from src.db.repository import upsert_author, upsert_paper_author, upsert_paper
 
@@ -287,8 +296,6 @@ def test_persist_authorship_data():
     pa_rec = upsert_paper_author("W_TEST_PAPER", "A_TEST_1", author_position=1)
     assert pa_rec["paper_id"] == "W_TEST_PAPER"
     assert pa_rec["author_id"] == "A_TEST_1"
-
-
 
 
 def test_connection_engine_missing_env():
@@ -303,7 +310,6 @@ def test_connection_engine_missing_env():
                 conn_mod.get_engine()
     finally:
         conn_mod._engine = old_engine
-
 
 
 def test_credential_cache_minting():
@@ -324,7 +330,6 @@ def test_credential_cache_minting():
         )
 
 
-
 def test_html_xss_sanitization():
     import html
 
@@ -334,6 +339,7 @@ def test_html_xss_sanitization():
     assert "&lt;img src=x onerror=alert(1)&gt;" == escaped_title
 
 
+@pytest.mark.integration
 def test_user_identity_isolation():
     u1 = create_user("alice@company.com", "Alice Smith")
     u2 = create_user("bob@company.com", "Bob Jones")
@@ -342,7 +348,6 @@ def test_user_identity_isolation():
 
     create_collection(u1["user_id"], "Alice Collection")
     create_collection(u2["user_id"], "Bob Collection")
-
 
     alice_colls = get_user_collections(u1["user_id"])
     bob_colls = get_user_collections(u2["user_id"])
@@ -353,16 +358,19 @@ def test_user_identity_isolation():
     assert bob_colls[0]["name"] == "Bob Collection"
 
 
+@pytest.mark.integration
 def test_vector_search_similarity_threshold_filtering():
     init_db()
     upsert_paper("W_NO_MATCH", "Orthogonal Paper", "Physics abstract")
-    insert_paper_embeddings([{
-        "paper_id": "W_NO_MATCH",
-        "chunk_index": 0,
-        "chunk_text": "Physics passage",
-        "embedding": [1.0] + [0.0] * 383,
-        "model_name": "all-MiniLM-L6-v2"
-    }])
+    insert_paper_embeddings([
+        {
+            "paper_id": "W_NO_MATCH",
+            "chunk_index": 0,
+            "chunk_text": "Physics passage",
+            "embedding": [1.0] + [0.0] * 383,
+            "model_name": "all-MiniLM-L6-v2",
+        }
+    ])
 
     # Search with an orthogonal query vector and high threshold (0.99)
     query_vec = [0.0] * 383 + [1.0]
@@ -370,6 +378,7 @@ def test_vector_search_similarity_threshold_filtering():
     assert len(results) == 0
 
 
+@pytest.mark.integration
 def test_vector_search_distinct_paper_deduplication():
     init_db()
     upsert_paper("W_MULTI_CHUNK", "Multi Chunk Paper", "Long paper abstract")
@@ -387,13 +396,17 @@ def test_vector_search_distinct_paper_deduplication():
 
 
 def test_long_document_multi_chunking():
-    long_abstract = "Graph Neural Networks (GNNs) represent a powerful class of deep learning models designed for non-Euclidean domain data. " * 45
+    long_abstract = (
+        "Graph Neural Networks (GNNs) represent a powerful class of deep learning models designed for non-Euclidean domain data. "
+        * 45
+    )
     assert len(long_abstract) > 4000
 
     chunks = chunk_text(long_abstract, chunk_size=800, chunk_overlap=100)
     assert len(chunks) >= 4
 
 
+@pytest.mark.integration
 def test_schema_constraints_and_hnsw_index():
     from sqlalchemy import text
     from src.db.connection import get_engine
@@ -403,7 +416,11 @@ def test_schema_constraints_and_hnsw_index():
 
     # 1. Verify HNSW index exists in pg_indexes
     with engine.connect() as conn:
-        res = conn.execute(text("SELECT indexname FROM pg_indexes WHERE schemaname = 'capstone' AND indexname = 'idx_paper_chunks_embedding';"))
+        res = conn.execute(
+            text(
+                "SELECT indexname FROM pg_indexes WHERE schemaname = 'capstone' AND indexname = 'idx_paper_chunks_embedding';"
+            )
+        )
         row = res.fetchone()
         assert row is not None
         assert row[0] == "idx_paper_chunks_embedding"
@@ -412,12 +429,12 @@ def test_schema_constraints_and_hnsw_index():
     user = create_user("cascade_test@test.com", "Cascade User")
     create_collection(user["user_id"], "Cascade Collection")
 
-
     colls = get_user_collections(user["user_id"])
     assert len(colls) == 1
 
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM capstone.users WHERE user_id = :uid;"), {"uid": user["user_id"]})
+
 
 def test_agent_tool_validation_and_security():
     from src.agent.tools import validate_tool_call
@@ -426,9 +443,26 @@ def test_agent_tool_validation_and_security():
     with pytest.raises(ValueError, match="Invalid or missing user_id context"):
         validate_tool_call("tool_add_user_note", {"content": "Test Note"}, user_id="")
 
-    # 2. Invalid reading status raises ValueError
+    # 2. Authorization check fails when user_id does not match session_user_id (IDOR mitigation)
+    with pytest.raises(ValueError, match="Authorization error"):
+        validate_tool_call("tool_add_user_note", {"content": "Test Note"}, user_id="user_alice", session_user_id="user_bob")
+
+    # 3. Invalid reading status raises ValueError
     with pytest.raises(ValueError, match="Invalid reading status"):
         tool_track_reading_progress(user_id="u123", paper_id="W1", status="invalid_status")
+
+
+def test_intent_entity_extraction_and_collection_parsing():
+    from src.agent.research_agent import classify_intent_with_entities
+
+    res1 = classify_intent_with_entities("add to my topology collection")
+    assert res1["intent"] == "add_to_collection"
+    assert res1["entities"]["collection_name"] == "Topology"
+
+    res2 = classify_intent_with_entities("save to automation collection")
+    assert res2["intent"] == "add_to_collection"
+    assert res2["entities"]["collection_name"] == "Automation"
+
 
 def test_topological_sort_reading_plan_engine():
     from src.agent.tools import topological_sort_papers

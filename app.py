@@ -168,7 +168,8 @@ with tab_discover:
             with st.container(border=True):
                 st.subheader(f"{p['title']} ({p.get('publication_year', 'N/A')})")
                 st.caption(f"Citations: {p.get('citation_count', 0)} | Topics: {p.get('topics', 'General')}")
-                st.write(f"{p['abstract'][:300]}...")
+                st.write(f"{(p.get('abstract') or '')[:300]}...")
+
                 oa_url = p.get("open_access_url")
                 if oa_url and isinstance(oa_url, str) and oa_url.startswith("https://"):
                     st.link_button("🔗 Read Open Access PDF", oa_url)
@@ -214,7 +215,8 @@ with tab_collections:
         for p in c_papers:
             with st.container(border=True):
                 st.subheader(f"{p['title']} ({p.get('publication_year', 'N/A')})")
-                st.write(f"{p['abstract'][:250]}...")
+                st.write(f"{(p.get('abstract') or '')[:250]}...")
+
 
 
     st.divider()

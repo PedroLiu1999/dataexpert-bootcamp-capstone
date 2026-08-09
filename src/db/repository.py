@@ -16,118 +16,28 @@ from src.db.connection import get_engine
 logger = logging.getLogger(__name__)
 
 
+from pathlib import Path
+
+
 def init_db() -> None:
-    """Initializes PostgreSQL tables and pgvector schema."""
+    """Initializes PostgreSQL tables and pgvector schema using migrations/001_init.sql."""
     engine = get_engine()
-    ddl = """
-    CREATE EXTENSION IF NOT EXISTS vector;
-    CREATE SCHEMA IF NOT EXISTS capstone;
+    migration_file = Path(__file__).resolve().parents[2] / "migrations" / "001_init.sql"
+    if not migration_file.exists():
+        migration_file = Path(__file__).resolve().parent / "001_init.sql"
 
-    CREATE TABLE IF NOT EXISTS capstone.users (
-        user_id VARCHAR(64) PRIMARY KEY,
-        email VARCHAR(255) UNIQUE NOT NULL,
-        full_name VARCHAR(255),
-        role VARCHAR(32) DEFAULT 'student',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
+    if not migration_file.exists():
+        logger.warning("Migration DDL file not found at %s; skipping initialization", migration_file)
+        return
 
-    CREATE TABLE IF NOT EXISTS capstone.learning_goals (
-        goal_id VARCHAR(64) PRIMARY KEY,
-        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
-        title VARCHAR(255) NOT NULL,
-        description TEXT,
-        target_level VARCHAR(64) DEFAULT 'Intermediate',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.papers (
-        paper_id VARCHAR(64) PRIMARY KEY,
-        doi VARCHAR(255),
-        title TEXT NOT NULL,
-        abstract TEXT,
-        publication_year INT,
-        citation_count INT DEFAULT 0,
-        open_access_url TEXT,
-        topics TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.authors (
-        author_id VARCHAR(64) PRIMARY KEY,
-        display_name VARCHAR(255) NOT NULL,
-        institution VARCHAR(255),
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.paper_authors (
-        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
-        author_id VARCHAR(64) NOT NULL REFERENCES capstone.authors(author_id) ON DELETE CASCADE,
-        author_position INT DEFAULT 1,
-        PRIMARY KEY (paper_id, author_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.collections (
-        collection_id VARCHAR(64) PRIMARY KEY,
-        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
-        name VARCHAR(255) NOT NULL,
-        description TEXT,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.collection_papers (
-        collection_id VARCHAR(64) NOT NULL REFERENCES capstone.collections(collection_id) ON DELETE CASCADE,
-        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
-        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        PRIMARY KEY (collection_id, paper_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.reading_progress (
-        progress_id BIGSERIAL PRIMARY KEY,
-        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
-        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
-        status VARCHAR(32) DEFAULT 'unread',
-        sequence_order INT DEFAULT 1,
-        rating INT,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_user_paper UNIQUE (user_id, paper_id)
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.notes (
-        note_id VARCHAR(64) PRIMARY KEY,
-        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
-        paper_id VARCHAR(64) REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
-        goal_id VARCHAR(64) REFERENCES capstone.learning_goals(goal_id) ON DELETE CASCADE,
-        content TEXT NOT NULL,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.paper_chunks (
-        chunk_id VARCHAR(64) PRIMARY KEY,
-        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
-        chunk_index INT NOT NULL,
-        chunk_text TEXT NOT NULL,
-        embedding vector(384),
-        model_name VARCHAR(128) DEFAULT 'sentence-transformers/all-MiniLM-L6-v2',
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
-    );
-
-    CREATE TABLE IF NOT EXISTS capstone.events (
-        event_id BIGSERIAL PRIMARY KEY,
-        event_type VARCHAR(64) NOT NULL,
-        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
-        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_paper_chunks_embedding
-    ON capstone.paper_chunks USING hnsw (embedding vector_cosine_ops);
-    """
-
-
+    sql_content = migration_file.read_text(encoding="utf-8")
     with engine.begin() as conn:
-        conn.execute(text(ddl))
-    logger.info("Lakebase database schema initialized successfully.")
+        for statement in sql_content.split(";"):
+            stmt = statement.strip()
+            if stmt:
+                conn.execute(text(stmt))
+    logger.info("Lakebase database schema initialized successfully from migrations/001_init.sql.")
+
 
 
 # --- Users CRUD ---
@@ -189,8 +99,10 @@ def create_learning_goal(
         )
         row = result.fetchone()
         d = dict(row._mapping) if row else {"goal_id": goal_id, "user_id": user_id, "title": title}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
+
         return d
 
 
@@ -249,8 +161,9 @@ def upsert_paper(
         )
         row = result.fetchone()
         d = dict(row._mapping) if row else {"paper_id": paper_id, "title": title}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
 
 
@@ -263,8 +176,9 @@ def get_paper_by_id(paper_id: str) -> Optional[Dict[str, Any]]:
         if not row:
             return None
         d = dict(row._mapping)
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
 
 
@@ -282,9 +196,11 @@ def upsert_author(author_id: str, display_name: str, institution: Optional[str] 
         result = conn.execute(query, {"author_id": author_id, "display_name": display_name, "institution": institution})
         row = result.fetchone()
         d = dict(row._mapping) if row else {"author_id": author_id, "display_name": display_name}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
+
 
 
 def upsert_paper_author(paper_id: str, author_id: str, author_position: int = 1) -> Dict[str, Any]:
@@ -318,8 +234,9 @@ def create_collection(user_id: str, name: str, description: Optional[str] = None
         )
         row = result.fetchone()
         d = dict(row._mapping) if row else {"collection_id": collection_id, "user_id": user_id, "name": name}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
 
 
@@ -331,8 +248,9 @@ def get_user_collections(user_id: str) -> List[Dict[str, Any]]:
         res = []
         for r in result.fetchall():
             d = dict(r._mapping)
-            if isinstance(d.get("created_at"), datetime):
-                d["created_at"] = d["created_at"].isoformat()
+            cat = d.get("created_at")
+            if isinstance(cat, datetime):
+                d["created_at"] = cat.isoformat()
             res.append(d)
         return res
 
@@ -362,8 +280,9 @@ def get_collection_papers(collection_id: str) -> List[Dict[str, Any]]:
         res = []
         for r in result.fetchall():
             d = dict(r._mapping)
-            if isinstance(d.get("created_at"), datetime):
-                d["created_at"] = d["created_at"].isoformat()
+            cat = d.get("created_at")
+            if isinstance(cat, datetime):
+                d["created_at"] = cat.isoformat()
             res.append(d)
         return res
 
@@ -400,8 +319,9 @@ def update_reading_progress(
         )
         row = result.fetchone()
         d = dict(row._mapping) if row else {"user_id": user_id, "paper_id": paper_id, "status": status}
-        if isinstance(d.get("updated_at"), datetime):
-            d["updated_at"] = d["updated_at"].isoformat()
+        uat = d.get("updated_at")
+        if isinstance(uat, datetime):
+            d["updated_at"] = uat.isoformat()
         return d
 
 
@@ -419,8 +339,9 @@ def get_user_reading_progress(user_id: str) -> List[Dict[str, Any]]:
         res = []
         for r in result.fetchall():
             d = dict(r._mapping)
-            if isinstance(d.get("updated_at"), datetime):
-                d["updated_at"] = d["updated_at"].isoformat()
+            uat = d.get("updated_at")
+            if isinstance(uat, datetime):
+                d["updated_at"] = uat.isoformat()
             res.append(d)
         return res
 
@@ -443,9 +364,11 @@ def add_note(
         )
         row = result.fetchone()
         d = dict(row._mapping) if row else {"note_id": note_id, "user_id": user_id, "content": content}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
+
 
 
 def get_user_notes(user_id: str) -> List[Dict[str, Any]]:
@@ -565,9 +488,11 @@ def log_analytics_event(event_type: str, user_id: str, payload: Dict[str, Any]) 
         result = conn.execute(query, {"event_type": event_type, "user_id": user_id, "payload": payload_str})
         row = result.fetchone()
         d = dict(row._mapping) if row else {"event_type": event_type, "user_id": user_id, "payload": payload}
-        if isinstance(d.get("created_at"), datetime):
-            d["created_at"] = d["created_at"].isoformat()
+        cat = d.get("created_at")
+        if isinstance(cat, datetime):
+            d["created_at"] = cat.isoformat()
         return d
+
 
 
 def get_user_analytics_summary(user_id: Optional[str] = None) -> Dict[str, Any]:
