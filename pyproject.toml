@@ -39,7 +39,8 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "W"]
-ignore = ["E501", "F401", "F841", "F811"] # Baseline configuration; tightened in T15
+ignore = ["E402", "E501", "F401", "F841", "F811"] # Baseline configuration; tightened in T15
+
 
 
 

@@ -4,9 +4,13 @@ Features OpenAlex paper discovery, Lakebase pgvector persistence, PySpark batch 
 collection management, sequenced study plan generator, and AI research agent chatbot.
 """
 
+import logging
 import os
 import sys
 import streamlit as st
+
+logger = logging.getLogger(__name__)
+
 try:
     from dotenv import load_dotenv
     load_dotenv()
@@ -98,14 +102,31 @@ def bootstrap_database() -> None:
 bootstrap_database()
 
 
+def get_authenticated_user_email() -> str:
+    """Extracts signed-in user email from Databricks Apps runtime headers (X-Forwarded-Email),
+    falling back to DEFAULT_EMAIL when running locally.
+    """
+    try:
+        headers = getattr(st.context, "headers", {}) or {}
+        for key, val in headers.items():
+            if key.lower() in ("x-forwarded-email", "x-forwarded-preferred-username") and val:
+                return str(val).strip()
+    except Exception as e:
+        logger.debug("Could not extract user headers: %s", e)
+
+    return os.environ.get("CAPSTONE_USER_EMAIL", "student@databricks.com")
+
+
 # User session state setup
-DEFAULT_EMAIL = "student@databricks.com"
-user = get_user_by_email(DEFAULT_EMAIL)
+user_email = get_authenticated_user_email()
+user = get_user_by_email(user_email)
 if not user:
-    user = create_user(email=DEFAULT_EMAIL, full_name="Databricks Research Student")
+    display_name = user_email.split("@")[0].replace(".", " ").title()
+    user = create_user(email=user_email, full_name=f"{display_name} (Databricks User)")
 
 user_id = user["user_id"]
 agent = ResearchAgent(user_id=user_id)
+
 
 # Header Banner
 st.markdown("""

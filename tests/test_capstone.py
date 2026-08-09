@@ -332,3 +332,22 @@ def test_html_xss_sanitization():
     escaped_title = html.escape(malicious_title)
     assert "<img" not in escaped_title
     assert "&lt;img src=x onerror=alert(1)&gt;" == escaped_title
+
+
+def test_user_identity_isolation():
+    u1 = create_user("alice@company.com", "Alice Smith")
+    u2 = create_user("bob@company.com", "Bob Jones")
+
+    assert u1["user_id"] != u2["user_id"]
+
+    c1 = create_collection(u1["user_id"], "Alice Collection")
+    c2 = create_collection(u2["user_id"], "Bob Collection")
+
+    alice_colls = get_user_collections(u1["user_id"])
+    bob_colls = get_user_collections(u2["user_id"])
+
+    assert len(alice_colls) == 1
+    assert alice_colls[0]["name"] == "Alice Collection"
+    assert len(bob_colls) == 1
+    assert bob_colls[0]["name"] == "Bob Collection"
+
