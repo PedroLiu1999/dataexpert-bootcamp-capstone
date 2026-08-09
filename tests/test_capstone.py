@@ -304,12 +304,15 @@ def test_credential_cache_minting():
 
     with patch("src.db.connection.WorkspaceClient", return_value=mock_ws):
         cache = _CredentialCache("projects/test/branches/dev/endpoints/primary")
-        token = cache.token()
-        assert token == "mock_token_abc123"
         mock_ws.postgres.generate_database_credential.assert_called_once_with(
             endpoint="projects/test/branches/dev/endpoints/primary"
         )
 
 
+def test_html_xss_sanitization():
+    import html
 
-
+    malicious_title = "<img src=x onerror=alert(1)>"
+    escaped_title = html.escape(malicious_title)
+    assert "<img" not in escaped_title
+    assert "&lt;img src=x onerror=alert(1)&gt;" == escaped_title

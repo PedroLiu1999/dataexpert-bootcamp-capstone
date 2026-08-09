@@ -145,26 +145,38 @@ with tab_discover:
 
     if "search_results" in st.session_state:
         for p in st.session_state["search_results"]:
-            st.markdown(f"""
-            <div class="paper-card">
-                <h3>{p['title']} <span class="badge">{p.get('publication_year', 'N/A')}</span></h3>
-                <p><strong>Citations:</strong> {p.get('citation_count', 0)} | <strong>Topics:</strong> {p.get('topics', 'General')}</p>
-                <p>{p['abstract'][:300]}...</p>
-                {f'<a href="{p["open_access_url"]}" target="_blank">🔗 Read Open Access PDF</a>' if p.get('open_access_url') else ''}
-            </div>
-            """, unsafe_allow_html=True)
-            c1, c2 = st.columns([1, 1])
-            with c1:
-                if st.button("➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
-                    tool_add_paper_to_collection(user_id, "General Research", p["paper_id"])
-                    cdf_tracker.log_event("tool_call", user_id, {"tool_name": "tool_add_paper_to_collection", "paper_id": p["paper_id"], "collection": "General Research"})
-                    cdf_tracker.log_event("paper_added", user_id, {"paper_id": p["paper_id"], "collection": "General Research"})
-                    st.toast(f"Added '{p['title'][:30]}...' to collection!")
-            with c2:
-                if st.button("📖 Track Reading Progress", key=f"track_{p['paper_id']}"):
-                    update_reading_progress(user_id, p["paper_id"], status="in_progress")
-                    cdf_tracker.log_event("progress_update", user_id, {"paper_id": p["paper_id"], "status": "in_progress"})
-                    st.toast(f"Marked '{p['title'][:30]}...' as In Progress!")
+            with st.container(border=True):
+                st.subheader(f"{p['title']} ({p.get('publication_year', 'N/A')})")
+                st.caption(f"Citations: {p.get('citation_count', 0)} | Topics: {p.get('topics', 'General')}")
+                st.write(f"{p['abstract'][:300]}...")
+                oa_url = p.get("open_access_url")
+                if oa_url and isinstance(oa_url, str) and oa_url.startswith("https://"):
+                    st.link_button("🔗 Read Open Access PDF", oa_url)
+
+                c1, c2 = st.columns([1, 1])
+                with c1:
+                    if st.button("➕ Save to Collection", key=f"add_coll_{p['paper_id']}"):
+                        tool_add_paper_to_collection(user_id, "General Research", p["paper_id"])
+                        cdf_tracker.log_event(
+                            "tool_call",
+                            user_id,
+                            {"tool_name": "tool_add_paper_to_collection", "paper_id": p["paper_id"], "collection": "General Research"},
+                        )
+                        cdf_tracker.log_event(
+                            "paper_added",
+                            user_id,
+                            {"paper_id": p["paper_id"], "collection": "General Research"},
+                        )
+                        st.toast(f"Added '{p['title'][:30]}...' to collection!")
+                with c2:
+                    if st.button("📖 Track Reading Progress", key=f"track_{p['paper_id']}"):
+                        update_reading_progress(user_id, p["paper_id"], status="in_progress")
+                        cdf_tracker.log_event(
+                            "progress_update",
+                            user_id,
+                            {"paper_id": p["paper_id"], "status": "in_progress"},
+                        )
+                        st.toast(f"Marked '{p['title'][:30]}...' as In Progress!")
 
 # --- Tab 2: Collections & Study Plan ---
 with tab_collections:
@@ -180,12 +192,10 @@ with tab_collections:
 
         st.markdown(f"**Collection:** `{selected_coll}` ({len(c_papers)} papers)")
         for p in c_papers:
-            st.markdown(f"""
-            <div class="paper-card">
-                <h4>{p['title']} ({p.get('publication_year', 'N/A')})</h4>
-                <p>{p['abstract'][:250]}...</p>
-            </div>
-            """, unsafe_allow_html=True)
+            with st.container(border=True):
+                st.subheader(f"{p['title']} ({p.get('publication_year', 'N/A')})")
+                st.write(f"{p['abstract'][:250]}...")
+
 
     st.divider()
     st.subheader("Reading Progress & Sequence")
