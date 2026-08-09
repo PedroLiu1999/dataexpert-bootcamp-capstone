@@ -6,7 +6,7 @@ bundle:
 resources:
   postgres_projects:
     capstone_lakebase_project:
-      project_id: 'capstone-lakebase-app'
+      project_id: 'capstone-lakebase-new'
       display_name: 'Capstone Research Lakebase'
       pg_version: 17
 
@@ -34,7 +34,7 @@ resources:
         - name: postgres
           postgres:
             branch: ${resources.postgres_branches.dev_branch.id}
-            database: ${resources.postgres_branches.dev_branch.id}/databases/databricks-postgres
+            database: ${resources.postgres_branches.dev_branch.id}/databases/databricks_postgres
             permission: CAN_CONNECT_AND_CREATE
 
 
@@ -50,8 +50,12 @@ resources:
         timezone_id: "UTC"
       tasks:
         - task_key: run_spark_paper_ingestion
-          spark_python_task:
-            python_file: src/spark_pipeline.py
+          notebook_task:
+            notebook_path: ./notebooks/spark_ingestion_pipeline.py
+            base_parameters:
+              search_query: "Graph Neural Networks for Drug Discovery"
+              limit: "25"
+              user_id: "scheduled-job"
           environment_key: default
 
       environments:
