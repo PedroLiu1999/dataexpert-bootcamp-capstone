@@ -9,8 +9,9 @@ An end-to-end academic research discovery, vector embedding, and personalized st
 - **Lakebase PostgreSQL & Connection Pooling**:
   - `src/db/connection.py`: Thread-safe OAuth database token rotation via `WorkspaceClient().postgres.generate_database_credential()` (`_CredentialCache`), process-wide pooled SQLAlchemy engine (`postgresql+psycopg://`, `pool_size=5`, `max_overflow=5`, `pool_recycle=1800`, `pool_pre_ping=True`).
   - `migrations/001_init.sql`: Idempotent relational DDL schema bootstrap with `TIMESTAMPTZ` timestamps, foreign key `ON DELETE CASCADE` constraints, composite unique indexes, and `events` analytics storage.
-- **Serverless PySpark Data Ingestion Pipeline**:
-  - `src/spark_pipeline.py`: Distributed paper metadata ingestion and vector embedding pipeline. Uses `mapPartitions` for per-partition model loading (`sentence-transformers/all-MiniLM-L6-v2`, $N=384$ vector dimensions) without hardcoded Spark master strings, collecting batch records on the driver for atomic Lakebase transactional upserts.
+- **Dual-Path Text Embedding & Ingestion Pipelines**:
+  - `src/embedding.py`: Pure-Python in-process text chunking and embedding pipeline used by the Streamlit App (`app.py`). Databricks Apps containers run in a plain serverless Python environment without a JVM or attached cluster; executing in-process avoids `JAVA_GATEWAY_EXITED` runtime errors while ensuring zero PySpark dependencies in the web runtime.
+  - `notebooks/spark_ingestion_pipeline.py` & `src/spark_pipeline.py`: Distributed PySpark ingestion and vector embedding job. Runs on serverless Databricks compute, utilizing `clean_papers_df` DataFrame transformations (deduplication, abstract length filtering, citation bucketing, prompt formatting) and `mapInPandas` for per-partition model loading (`sentence-transformers/all-MiniLM-L6-v2`, $N=384$ vector dimensions) and atomic Lakebase batch upserts.
 - **OpenAlex REST API Discovery Client**:
   - `src/openalex_client.py`: High-throughput academic research search with `primary_location.landing_page_url` fallback, payload size optimization via `select=`, empty query result caching, and LRU cache eviction.
 - **Vector Search Precision & HNSW Index**:

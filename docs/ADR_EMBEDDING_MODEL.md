@@ -11,7 +11,7 @@ We select **SentenceTransformers `all-MiniLM-L6-v2` with $N=384$ dimensions** as
 
 ### Single Source of Truth Constants:
 - **Vector Dimension**: `384`
-- **Python Constant**: `src.spark_pipeline.EMBEDDING_DIMS = 384`
+- **Python Constant**: `src.embedding.EMBEDDING_DIMS = 384`
 - **PostgreSQL DDL**: `vector(384)` in `capstone.papers` and `capstone.paper_chunks`
 
 ### Rationale:
