@@ -13,9 +13,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Iterator
 
 # Ensure workspace root is present in sys.path for standalone PySpark task execution
-root_dir = str(Path(__file__).resolve().parents[1])
+if "__file__" in globals():
+    root_dir = str(Path(__file__).resolve().parents[1])
+else:
+    root_dir = str(Path.cwd())
+
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
+
 
 from src.db.repository import init_db, insert_paper_embeddings, upsert_paper, upsert_author, upsert_paper_author
 

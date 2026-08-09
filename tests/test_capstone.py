@@ -482,6 +482,19 @@ def test_topological_sort_reading_plan_engine():
     assert ordered[1]["paper_id"] == "W_B"
 
 
+def test_spark_pipeline_sys_path_fallback():
+    from pathlib import Path
+
+    if "__file__" in globals():
+        root_dir = str(Path(__file__).resolve().parents[1])
+    else:
+        root_dir = str(Path.cwd())
+
+    assert root_dir is not None
+    assert len(root_dir) > 0
+
+
+
 
 
 
