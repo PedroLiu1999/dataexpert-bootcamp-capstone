@@ -182,12 +182,14 @@ class ResearchAgent:
             lines = [f"💡 *Agent Rationale*: {rationale}\n", "### Research Synthesis & Multi-Paper Evidence Analysis\n"]
             for idx, p in enumerate(rag_results):
                 c_num = idx + 1
-                sim = p.get("similarity", 0.85)
-                chunk_snippet = p.get("chunk_text") or p["abstract"]
+                sim = p.get("similarity")
+                abstract_text = p.get("abstract") or "No abstract provided."
+                chunk_snippet = p.get("chunk_text") or abstract_text
                 lines.append(f"#### [{c_num}] {p['title']} ({p.get('publication_year', 'N/A')})")
-                lines.append(f"- **Similarity Score**: `{sim:.2f}`")
+                if sim is not None:
+                    lines.append(f"- **Similarity Score**: `{float(sim):.2f}`")
                 lines.append(f"- **Grounding Rationale**: Matched passage: *\"{chunk_snippet[:180]}...\"*")
-                lines.append(f"- **Evidence Summary**: {p['abstract'][:250]}...")
+                lines.append(f"- **Evidence Summary**: {abstract_text[:250]}...")
                 if p.get("open_access_url"):
                     lines.append(f"- [Open Access Link]({p['open_access_url']})")
                 lines.append("")
@@ -199,6 +201,7 @@ class ResearchAgent:
                     "url": p.get("open_access_url"),
                     "similarity": sim
                 })
+
 
             response_text = "\n".join(lines)
 

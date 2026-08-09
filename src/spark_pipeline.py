@@ -33,36 +33,16 @@ def get_embedding_model():
     if _model_instance is not None:
         return _model_instance
 
-    try:
-        from sentence_transformers import SentenceTransformer
-        logger.info(f"Loading SentenceTransformer model '{MODEL_NAME}'...")
-        _model_instance = SentenceTransformer(MODEL_NAME)
-        return _model_instance
-    except Exception as e:
-        logger.warning(f"Could not load SentenceTransformer: {e}. Using unit vector fallback.")
-        return None
+    from sentence_transformers import SentenceTransformer
+    logger.info(f"Loading SentenceTransformer model '{MODEL_NAME}'...")
+    _model_instance = SentenceTransformer(MODEL_NAME)
+    return _model_instance
 
 
 def generate_embedding(text: str) -> List[float]:
     model = get_embedding_model()
-    if model is not None:
-        try:
-            vec = model.encode(text, normalize_embeddings=True)
-            return vec.tolist()
-        except Exception as e:
-            logger.warning(f"Error encoding vector: {e}")
-
-    seed_bytes = hashlib.sha512(text.encode("utf-8")).digest()
-    vec = []
-    for i in range(EMBEDDING_DIMS):
-        byte_val = seed_bytes[i % len(seed_bytes)]
-        val = (byte_val / 127.5) - 1.0
-        vec.append(val)
-
-    norm = math.sqrt(sum(x * x for x in vec))
-    if norm > 0:
-        vec = [x / norm for x in vec]
-    return vec
+    vec = model.encode(text, normalize_embeddings=True)
+    return vec.tolist()
 
 
 def chunk_text(text: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> List[str]:

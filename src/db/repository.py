@@ -1,155 +1,214 @@
+"""Lakebase Repository module handling database CRUD operations across domain tables:
+
+users, learning_goals, papers, authors, paper_authors, collections, collection_papers,
+reading_progress, notes, paper_chunks + pgvector cosine similarity search.
 """
-Lakebase Repository module handling CRUD operations across all 9 domain tables
-(users, learning_goals, papers, authors, paper_authors, collections, collection_papers,
-reading_progress, notes) + pgvector cosine similarity search.
-"""
+
+from __future__ import annotations
 
 from datetime import datetime, timezone
-import hashlib
 import logging
-import math
 import uuid
 from typing import Any, Dict, List, Optional
-try:
-    from psycopg2.extras import execute_values  # type: ignore
-except ImportError:
-    execute_values = None
-
-from src.db.connection import get_db_connection, is_postgres_available
-from src.db.models import CREATE_TABLES_SQL
+from sqlalchemy import text
+from src.db.connection import get_engine
 
 logger = logging.getLogger(__name__)
 
-# In-memory storage mock fallbacks for testing/offline environments
-_MOCK_USERS: Dict[str, Dict[str, Any]] = {}
-_MOCK_GOALS: Dict[str, Dict[str, Any]] = {}
-_MOCK_PAPERS: Dict[str, Dict[str, Any]] = {}
-_MOCK_AUTHORS: Dict[str, Dict[str, Any]] = {}
-_MOCK_PAPER_AUTHORS: List[Dict[str, Any]] = []
-_MOCK_COLLECTIONS: Dict[str, Dict[str, Any]] = {}
-_MOCK_COLLECTION_PAPERS: List[Dict[str, Any]] = []
-_MOCK_READING_PROGRESS: Dict[str, Dict[str, Any]] = {}
-_MOCK_NOTES: Dict[str, Dict[str, Any]] = {}
-_MOCK_EMBEDDINGS: List[Dict[str, Any]] = []
-
 
 def init_db() -> None:
-    """
-    Initializes PostgreSQL tables and pgvector index if available.
-    """
-    if not is_postgres_available():
-        logger.info("Lakebase PostgreSQL not available; operating in-memory mock mode.")
-        return
+    """Initializes PostgreSQL tables and pgvector schema."""
+    engine = get_engine()
+    ddl = """
+    CREATE EXTENSION IF NOT EXISTS vector;
+    CREATE SCHEMA IF NOT EXISTS capstone;
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(CREATE_TABLES_SQL)
-        conn.commit()
+    CREATE TABLE IF NOT EXISTS capstone.users (
+        user_id VARCHAR(64) PRIMARY KEY,
+        email VARCHAR(255) UNIQUE NOT NULL,
+        full_name VARCHAR(255),
+        role VARCHAR(32) DEFAULT 'student',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.learning_goals (
+        goal_id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+        title VARCHAR(255) NOT NULL,
+        description TEXT,
+        target_level VARCHAR(64) DEFAULT 'Intermediate',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.papers (
+        paper_id VARCHAR(64) PRIMARY KEY,
+        doi VARCHAR(255),
+        title TEXT NOT NULL,
+        abstract TEXT,
+        publication_year INT,
+        citation_count INT DEFAULT 0,
+        open_access_url TEXT,
+        topics TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.authors (
+        author_id VARCHAR(64) PRIMARY KEY,
+        display_name VARCHAR(255) NOT NULL,
+        institution VARCHAR(255),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.paper_authors (
+        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
+        author_id VARCHAR(64) NOT NULL REFERENCES capstone.authors(author_id) ON DELETE CASCADE,
+        author_position INT DEFAULT 1,
+        PRIMARY KEY (paper_id, author_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.collections (
+        collection_id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+        name VARCHAR(255) NOT NULL,
+        description TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.collection_papers (
+        collection_id VARCHAR(64) NOT NULL REFERENCES capstone.collections(collection_id) ON DELETE CASCADE,
+        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
+        added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (collection_id, paper_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.reading_progress (
+        progress_id BIGSERIAL PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
+        status VARCHAR(32) DEFAULT 'unread',
+        sequence_order INT DEFAULT 1,
+        rating INT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_user_paper UNIQUE (user_id, paper_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.notes (
+        note_id VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES capstone.users(user_id) ON DELETE CASCADE,
+        paper_id VARCHAR(64) REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
+        goal_id VARCHAR(64) REFERENCES capstone.learning_goals(goal_id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS capstone.paper_chunks (
+        chunk_id VARCHAR(64) PRIMARY KEY,
+        paper_id VARCHAR(64) NOT NULL REFERENCES capstone.papers(paper_id) ON DELETE CASCADE,
+        chunk_index INT NOT NULL,
+        chunk_text TEXT NOT NULL,
+        embedding vector(384),
+        model_name VARCHAR(128) DEFAULT 'sentence-transformers/all-MiniLM-L6-v2',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        CONSTRAINT uq_paper_chunk UNIQUE (paper_id, chunk_index)
+    );
+    """
+    with engine.begin() as conn:
+        conn.execute(text(ddl))
+    logger.info("Lakebase database schema initialized successfully.")
 
 
 # --- Users CRUD ---
 def create_user(email: str, full_name: str) -> Dict[str, Any]:
     user_id = str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {"user_id": user_id, "email": email, "full_name": full_name, "created_at": now_iso}
-
-    if not is_postgres_available():
-        _MOCK_USERS[user_id] = record
-        return record
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO users (user_id, email, full_name, created_at) VALUES (%s, %s, %s, %s) ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name RETURNING *;",
-                (user_id, email, full_name, now_iso),
-            )
-            row = cur.fetchone()
-            conn.commit()
-            return dict(row) if row else record
+    query = text("""
+        INSERT INTO capstone.users (user_id, email, full_name)
+        VALUES (:user_id, :email, :full_name)
+        ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name
+        RETURNING user_id, email, full_name, role, created_at;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(query, {"user_id": user_id, "email": email, "full_name": full_name})
+        row = result.fetchone()
+        if row:
+            d = dict(row._mapping)
+            if isinstance(d.get("created_at"), datetime):
+                d["created_at"] = d["created_at"].isoformat()
+            return d
+        return {"user_id": user_id, "email": email, "full_name": full_name}
 
 
 def get_user_by_email(email: str) -> Optional[Dict[str, Any]]:
-    if not is_postgres_available():
-        for u in _MOCK_USERS.values():
-            if u["email"].lower() == email.lower():
-                return u
-        return None
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM users WHERE LOWER(email) = LOWER(%s);", (email,))
-            row = cur.fetchone()
-            return dict(row) if row else None
+    query = text("SELECT * FROM capstone.users WHERE LOWER(email) = LOWER(:email);")
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"email": email})
+        row = result.fetchone()
+        if not row:
+            return None
+        d = dict(row._mapping)
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 # --- Learning Goals ---
-def create_learning_goal(user_id: str, title: str, description: str, target_level: str = "Intermediate") -> Dict[str, Any]:
+def create_learning_goal(
+    user_id: str, title: str, description: str, target_level: str = "Intermediate"
+) -> Dict[str, Any]:
     goal_id = str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "goal_id": goal_id,
-        "user_id": user_id,
-        "title": title,
-        "description": description,
-        "target_level": target_level,
-        "created_at": now_iso,
-    }
-
-    if not is_postgres_available():
-        _MOCK_GOALS[goal_id] = record
-        return record
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO learning_goals (goal_id, user_id, title, description, target_level, created_at) VALUES (%s, %s, %s, %s, %s, %s);",
-                (goal_id, user_id, title, description, target_level, now_iso),
-            )
-        conn.commit()
-    return record
+    query = text("""
+        INSERT INTO capstone.learning_goals (goal_id, user_id, title, description, target_level)
+        VALUES (:goal_id, :user_id, :title, :description, :target_level)
+        RETURNING goal_id, user_id, title, description, target_level, created_at;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {
+                "goal_id": goal_id,
+                "user_id": user_id,
+                "title": title,
+                "description": description,
+                "target_level": target_level,
+            },
+        )
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"goal_id": goal_id, "user_id": user_id, "title": title}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def get_user_learning_goals(user_id: str) -> List[Dict[str, Any]]:
-    if not is_postgres_available():
-        return [g for g in _MOCK_GOALS.values() if g["user_id"] == user_id]
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM learning_goals WHERE user_id = %s ORDER BY created_at DESC;", (user_id,))
-            return [dict(r) for r in cur.fetchall()]
+    query = text("SELECT * FROM capstone.learning_goals WHERE user_id = :user_id ORDER BY created_at DESC;")
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"user_id": user_id})
+        res = []
+        for r in result.fetchall():
+            d = dict(r._mapping)
+            if isinstance(d.get("created_at"), datetime):
+                d["created_at"] = d["created_at"].isoformat()
+            res.append(d)
+        return res
 
 
 # --- Papers & Authors ---
 def upsert_paper(
     paper_id: str,
     title: str,
-    abstract: str,
+    abstract: Optional[str] = None,
     doi: Optional[str] = None,
     publication_year: Optional[int] = None,
     citation_count: int = 0,
     open_access_url: Optional[str] = None,
     topics: Optional[str] = None,
 ) -> Dict[str, Any]:
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "paper_id": paper_id,
-        "doi": doi,
-        "title": title,
-        "abstract": abstract,
-        "publication_year": publication_year,
-        "citation_count": citation_count,
-        "open_access_url": open_access_url,
-        "topics": topics,
-        "created_at": now_iso,
-    }
-
-    if not is_postgres_available():
-        _MOCK_PAPERS[paper_id] = record
-        return record
-
-    query = """
-        INSERT INTO papers (paper_id, doi, title, abstract, publication_year, citation_count, open_access_url, topics, created_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+    query = text("""
+        INSERT INTO capstone.papers (paper_id, doi, title, abstract, publication_year, citation_count, open_access_url, topics)
+        VALUES (:paper_id, :doi, :title, :abstract, :publication_year, :citation_count, :open_access_url, :topics)
         ON CONFLICT (paper_id) DO UPDATE SET
             doi = EXCLUDED.doi,
             title = EXCLUDED.title,
@@ -157,336 +216,295 @@ def upsert_paper(
             publication_year = EXCLUDED.publication_year,
             citation_count = EXCLUDED.citation_count,
             open_access_url = EXCLUDED.open_access_url,
-            topics = EXCLUDED.topics;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                query,
-                (paper_id, doi, title, abstract, publication_year, citation_count, open_access_url, topics, now_iso),
-            )
-        conn.commit()
-    return record
+            topics = EXCLUDED.topics
+        RETURNING *;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {
+                "paper_id": paper_id,
+                "doi": doi,
+                "title": title,
+                "abstract": abstract,
+                "publication_year": publication_year,
+                "citation_count": citation_count,
+                "open_access_url": open_access_url,
+                "topics": topics,
+            },
+        )
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"paper_id": paper_id, "title": title}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def get_paper_by_id(paper_id: str) -> Optional[Dict[str, Any]]:
-    if not is_postgres_available():
-        return _MOCK_PAPERS.get(paper_id)
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM papers WHERE paper_id = %s;", (paper_id,))
-            row = cur.fetchone()
-            return dict(row) if row else None
+    query = text("SELECT * FROM capstone.papers WHERE paper_id = :paper_id;")
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"paper_id": paper_id})
+        row = result.fetchone()
+        if not row:
+            return None
+        d = dict(row._mapping)
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def upsert_author(author_id: str, display_name: str, institution: Optional[str] = None) -> Dict[str, Any]:
-    record = {"author_id": author_id, "display_name": display_name, "institution": institution}
-    if not is_postgres_available():
-        _MOCK_AUTHORS[author_id] = record
-        return record
-
-    query = """
-        INSERT INTO authors (author_id, display_name, institution)
-        VALUES (%s, %s, %s)
+    query = text("""
+        INSERT INTO capstone.authors (author_id, display_name, institution)
+        VALUES (:author_id, :display_name, :institution)
         ON CONFLICT (author_id) DO UPDATE SET
             display_name = EXCLUDED.display_name,
-            institution = EXCLUDED.institution;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (author_id, display_name, institution))
-        conn.commit()
-    return record
+            institution = EXCLUDED.institution
+        RETURNING *;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(query, {"author_id": author_id, "display_name": display_name, "institution": institution})
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"author_id": author_id, "display_name": display_name}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def upsert_paper_author(paper_id: str, author_id: str, author_position: int = 1) -> Dict[str, Any]:
-    record = {"paper_id": paper_id, "author_id": author_id, "author_position": author_position}
-    if not is_postgres_available():
-        # Upsert into mock list
-        for idx, existing in enumerate(_MOCK_PAPER_AUTHORS):
-            if existing["paper_id"] == paper_id and existing["author_id"] == author_id:
-                _MOCK_PAPER_AUTHORS[idx] = record
-                return record
-        _MOCK_PAPER_AUTHORS.append(record)
-        return record
-
-    query = """
-        INSERT INTO paper_authors (paper_id, author_id, author_position)
-        VALUES (%s, %s, %s)
+    query = text("""
+        INSERT INTO capstone.paper_authors (paper_id, author_id, author_position)
+        VALUES (:paper_id, :author_id, :author_position)
         ON CONFLICT (paper_id, author_id) DO UPDATE SET
-            author_position = EXCLUDED.author_position;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (paper_id, author_id, author_position))
-        conn.commit()
-    return record
+            author_position = EXCLUDED.author_position
+        RETURNING *;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(query, {"paper_id": paper_id, "author_id": author_id, "author_position": author_position})
+        row = result.fetchone()
+        return dict(row._mapping) if row else {"paper_id": paper_id, "author_id": author_id}
 
 
 # --- Collections ---
 def create_collection(user_id: str, name: str, description: Optional[str] = None) -> Dict[str, Any]:
     collection_id = str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "collection_id": collection_id,
-        "user_id": user_id,
-        "name": name,
-        "description": description or "",
-        "created_at": now_iso,
-    }
-
-    if not is_postgres_available():
-        _MOCK_COLLECTIONS[collection_id] = record
-        return record
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO collections (collection_id, user_id, name, description, created_at) VALUES (%s, %s, %s, %s, %s);",
-                (collection_id, user_id, name, description or "", now_iso),
-            )
-        conn.commit()
-    return record
+    query = text("""
+        INSERT INTO capstone.collections (collection_id, user_id, name, description)
+        VALUES (:collection_id, :user_id, :name, :description)
+        RETURNING *;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {"collection_id": collection_id, "user_id": user_id, "name": name, "description": description or ""},
+        )
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"collection_id": collection_id, "user_id": user_id, "name": name}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def get_user_collections(user_id: str) -> List[Dict[str, Any]]:
-    if not is_postgres_available():
-        return [c for c in _MOCK_COLLECTIONS.values() if c["user_id"] == user_id]
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM collections WHERE user_id = %s ORDER BY created_at DESC;", (user_id,))
-            return [dict(r) for r in cur.fetchall()]
+    query = text("SELECT * FROM capstone.collections WHERE user_id = :user_id ORDER BY created_at DESC;")
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"user_id": user_id})
+        res = []
+        for r in result.fetchall():
+            d = dict(r._mapping)
+            if isinstance(d.get("created_at"), datetime):
+                d["created_at"] = d["created_at"].isoformat()
+            res.append(d)
+        return res
 
 
 def add_paper_to_collection(collection_id: str, paper_id: str) -> bool:
-    now_iso = datetime.now(timezone.utc).isoformat()
-    if not is_postgres_available():
-        _MOCK_COLLECTION_PAPERS.append({"collection_id": collection_id, "paper_id": paper_id, "added_at": now_iso})
-        return True
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO collection_papers (collection_id, paper_id, added_at) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING;",
-                (collection_id, paper_id, now_iso),
-            )
-        conn.commit()
+    query = text("""
+        INSERT INTO capstone.collection_papers (collection_id, paper_id)
+        VALUES (:collection_id, :paper_id)
+        ON CONFLICT DO NOTHING;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        conn.execute(query, {"collection_id": collection_id, "paper_id": paper_id})
     return True
 
 
 def get_collection_papers(collection_id: str) -> List[Dict[str, Any]]:
-    if not is_postgres_available():
-        paper_ids = [cp["paper_id"] for cp in _MOCK_COLLECTION_PAPERS if cp["collection_id"] == collection_id]
-        return [p for p_id, p in _MOCK_PAPERS.items() if p_id in paper_ids]
-
-    query = """
-        SELECT p.* FROM papers p
-        JOIN collection_papers cp ON p.paper_id = cp.paper_id
-        WHERE cp.collection_id = %s
+    query = text("""
+        SELECT p.* FROM capstone.papers p
+        JOIN capstone.collection_papers cp ON p.paper_id = cp.paper_id
+        WHERE cp.collection_id = :collection_id
         ORDER BY cp.added_at DESC;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (collection_id,))
-            return [dict(r) for r in cur.fetchall()]
+    """)
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"collection_id": collection_id})
+        res = []
+        for r in result.fetchall():
+            d = dict(r._mapping)
+            if isinstance(d.get("created_at"), datetime):
+                d["created_at"] = d["created_at"].isoformat()
+            res.append(d)
+        return res
 
 
 # --- Reading Progress ---
 def update_reading_progress(
-    user_id: str, paper_id: str, status: str = "in_progress", sequence_order: int = 1, rating: Optional[int] = None
+    user_id: str,
+    paper_id: str,
+    status: str = "in_progress",
+    sequence_order: int = 1,
+    rating: Optional[int] = None,
 ) -> Dict[str, Any]:
-    progress_id = f"prog-{user_id[:8]}-{paper_id[:16]}"
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "progress_id": progress_id,
-        "user_id": user_id,
-        "paper_id": paper_id,
-        "status": status,
-        "sequence_order": sequence_order,
-        "rating": rating,
-        "updated_at": now_iso,
-    }
-
-    if not is_postgres_available():
-        _MOCK_READING_PROGRESS[progress_id] = record
-        return record
-
-    query = """
-        INSERT INTO reading_progress (progress_id, user_id, paper_id, status, sequence_order, rating, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        ON CONFLICT (progress_id) DO UPDATE SET
+    query = text("""
+        INSERT INTO capstone.reading_progress (user_id, paper_id, status, sequence_order, rating)
+        VALUES (:user_id, :paper_id, :status, :sequence_order, :rating)
+        ON CONFLICT (user_id, paper_id) DO UPDATE SET
             status = EXCLUDED.status,
             sequence_order = EXCLUDED.sequence_order,
             rating = EXCLUDED.rating,
-            updated_at = EXCLUDED.updated_at;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (progress_id, user_id, paper_id, status, sequence_order, rating, now_iso))
-        conn.commit()
-    return record
+            updated_at = NOW()
+        RETURNING progress_id, user_id, paper_id, status, sequence_order, rating, updated_at;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {
+                "user_id": user_id,
+                "paper_id": paper_id,
+                "status": status,
+                "sequence_order": sequence_order,
+                "rating": rating,
+            },
+        )
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"user_id": user_id, "paper_id": paper_id, "status": status}
+        if isinstance(d.get("updated_at"), datetime):
+            d["updated_at"] = d["updated_at"].isoformat()
+        return d
 
 
 def get_user_reading_progress(user_id: str) -> List[Dict[str, Any]]:
-    if not is_postgres_available():
-        res = []
-        for rp in _MOCK_READING_PROGRESS.values():
-            if rp["user_id"] == user_id:
-                p = _MOCK_PAPERS.get(rp["paper_id"], {})
-                combined = {**rp, "title": p.get("title", ""), "abstract": p.get("abstract", "")}
-                res.append(combined)
-        return sorted(res, key=lambda x: x["sequence_order"])
-
-    query = """
+    query = text("""
         SELECT rp.*, p.title, p.abstract, p.citation_count, p.open_access_url
-        FROM reading_progress rp
-        JOIN papers p ON rp.paper_id = p.paper_id
-        WHERE rp.user_id = %s
+        FROM capstone.reading_progress rp
+        JOIN capstone.papers p ON rp.paper_id = p.paper_id
+        WHERE rp.user_id = :user_id
         ORDER BY rp.sequence_order ASC;
-    """
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (user_id,))
-            return [dict(r) for r in cur.fetchall()]
+    """)
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"user_id": user_id})
+        res = []
+        for r in result.fetchall():
+            d = dict(r._mapping)
+            if isinstance(d.get("updated_at"), datetime):
+                d["updated_at"] = d["updated_at"].isoformat()
+            res.append(d)
+        return res
 
 
 # --- Notes ---
-def add_note(user_id: str, content: str, paper_id: Optional[str] = None, goal_id: Optional[str] = None) -> Dict[str, Any]:
+def add_note(
+    user_id: str, content: str, paper_id: Optional[str] = None, goal_id: Optional[str] = None
+) -> Dict[str, Any]:
     note_id = str(uuid.uuid4())
-    now_iso = datetime.now(timezone.utc).isoformat()
-    record = {
-        "note_id": note_id,
-        "user_id": user_id,
-        "paper_id": paper_id,
-        "goal_id": goal_id,
-        "content": content,
-        "created_at": now_iso,
-    }
-
-    if not is_postgres_available():
-        _MOCK_NOTES[note_id] = record
-        return record
-
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO notes (note_id, user_id, paper_id, goal_id, content, created_at) VALUES (%s, %s, %s, %s, %s, %s);",
-                (note_id, user_id, paper_id, goal_id, content, now_iso),
-            )
-        conn.commit()
-    return record
+    query = text("""
+        INSERT INTO capstone.notes (note_id, user_id, paper_id, goal_id, content)
+        VALUES (:note_id, :user_id, :paper_id, :goal_id, :content)
+        RETURNING *;
+    """)
+    engine = get_engine()
+    with engine.begin() as conn:
+        result = conn.execute(
+            query,
+            {"note_id": note_id, "user_id": user_id, "paper_id": paper_id, "goal_id": goal_id, "content": content},
+        )
+        row = result.fetchone()
+        d = dict(row._mapping) if row else {"note_id": note_id, "user_id": user_id, "content": content}
+        if isinstance(d.get("created_at"), datetime):
+            d["created_at"] = d["created_at"].isoformat()
+        return d
 
 
 def get_user_notes(user_id: str) -> List[Dict[str, Any]]:
-    if not is_postgres_available():
-        return [n for n in _MOCK_NOTES.values() if n["user_id"] == user_id]
+    query = text("SELECT * FROM capstone.notes WHERE user_id = :user_id ORDER BY created_at DESC;")
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"user_id": user_id})
+        res = []
+        for r in result.fetchall():
+            d = dict(r._mapping)
+            if isinstance(d.get("created_at"), datetime):
+                d["created_at"] = d["created_at"].isoformat()
+            res.append(d)
+        return res
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT * FROM notes WHERE user_id = %s ORDER BY created_at DESC;", (user_id,))
-            return [dict(r) for r in cur.fetchall()]
 
-
-# --- Paper Embeddings & Vector Search ---
+# --- Paper Chunks & Vector Search ---
 def insert_paper_embeddings(embeddings_data: List[Dict[str, Any]]) -> int:
     if not embeddings_data:
         return 0
 
-    if not is_postgres_available():
-        inserted_count = 0
-        for item in embeddings_data:
-            p_id = item["paper_id"]
-            c_idx = item["chunk_index"]
-            # Upsert into mock storage
-            updated = False
-            for idx, existing in enumerate(_MOCK_EMBEDDINGS):
-                if existing["paper_id"] == p_id and existing["chunk_index"] == c_idx:
-                    _MOCK_EMBEDDINGS[idx] = item
-                    updated = True
-                    break
-            if not updated:
-                _MOCK_EMBEDDINGS.append(item)
-            inserted_count += 1
-        return inserted_count
-
-    insert_sql = """
-        INSERT INTO paper_embeddings (paper_id, chunk_index, chunk_text, embedding, model_name, created_at)
-        VALUES (%s, %s, %s, %s::vector, %s, %s)
+    engine = get_engine()
+    query = text("""
+        INSERT INTO capstone.paper_chunks (chunk_id, paper_id, chunk_index, chunk_text, embedding, model_name)
+        VALUES (:chunk_id, :paper_id, :chunk_index, :chunk_text, CAST(:embedding AS vector), :model_name)
         ON CONFLICT (paper_id, chunk_index) DO UPDATE SET
             chunk_text = EXCLUDED.chunk_text,
             embedding = EXCLUDED.embedding,
-            model_name = EXCLUDED.model_name,
-            created_at = EXCLUDED.created_at;
-    """
-    tuples = [
-        (
-            e["paper_id"],
-            e["chunk_index"],
-            e["chunk_text"],
-            "[" + ",".join(str(float(v)) for v in e["embedding"]) + "]",
-            e["model_name"],
-            e["created_at"],
-        )
-        for e in embeddings_data
-    ]
+            model_name = EXCLUDED.model_name;
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            execute_values(cur, insert_sql, tuples)
-        conn.commit()
+    """)
+
+    # Single transaction for batch vector chunk insertion
+    with engine.begin() as conn:
+        for e in embeddings_data:
+            chunk_id = e.get("chunk_id") or f"{e['paper_id']}_c{e['chunk_index']}"
+            vec = e["embedding"]
+            vec_str = "[" + ",".join(str(float(v)) for v in vec) + "]"
+            model_name = e.get("model_name", "sentence-transformers/all-MiniLM-L6-v2")
+            conn.execute(
+                query,
+                {
+                    "chunk_id": chunk_id,
+                    "paper_id": e["paper_id"],
+                    "chunk_index": e["chunk_index"],
+                    "chunk_text": e["chunk_text"],
+                    "embedding": vec_str,
+                    "model_name": model_name,
+                },
+            )
     return len(embeddings_data)
 
 
 def vector_search_papers(query_vector: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
     top_k = max(1, min(20, top_k))
-
-    if not is_postgres_available():
-        q_len = math.sqrt(sum(x * x for x in query_vector))
-        if q_len == 0:
-            return []
-
-        results = []
-        for emb in _MOCK_EMBEDDINGS:
-            paper = _MOCK_PAPERS.get(emb["paper_id"])
-            if not paper:
-                continue
-            e_vec = emb["embedding"]
-            e_len = math.sqrt(sum(x * x for x in e_vec))
-            if e_len == 0:
-                continue
-            dot = sum(a * b for a, b in zip(query_vector, e_vec))
-            sim = dot / (q_len * e_len)
-            results.append({
-                "paper_id": paper["paper_id"],
-                "title": paper["title"],
-                "abstract": paper["abstract"],
-                "publication_year": paper.get("publication_year"),
-                "citation_count": paper.get("citation_count", 0),
-                "open_access_url": paper.get("open_access_url"),
-                "chunk_text": emb["chunk_text"],
-                "similarity": round(float(sim), 4),
-            })
-        results.sort(key=lambda x: x["similarity"], reverse=True)
-        return results[:top_k]
-
     vec_str = "[" + ",".join(str(float(x)) for x in query_vector) + "]"
-    query = """
-        SELECT p.paper_id, p.title, p.abstract, p.publication_year, p.citation_count, p.open_access_url,
-               e.chunk_text, 1 - (e.embedding <=> %s::vector) AS similarity
-        FROM paper_embeddings e
-        JOIN papers p ON p.paper_id = e.paper_id
-        ORDER BY e.embedding <=> %s::vector ASC
-        LIMIT %s;
-    """
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cur:
-            cur.execute(query, (vec_str, vec_str, top_k))
-            results = []
-            for r in cur.fetchall():
-                r_dict = dict(r)
-                r_dict["similarity"] = round(float(r_dict["similarity"]), 4)
-                results.append(r_dict)
-            return results
+    query = text("""
+        SELECT p.paper_id, p.title, p.abstract, p.publication_year, p.citation_count, p.open_access_url,
+               pc.chunk_text, 1 - (pc.embedding <=> CAST(:vec AS vector)) AS similarity
+        FROM capstone.paper_chunks pc
+        JOIN capstone.papers p ON p.paper_id = pc.paper_id
+        ORDER BY pc.embedding <=> CAST(:vec AS vector) ASC
+        LIMIT :top_k;
+    """)
+
+    engine = get_engine()
+    with engine.connect() as conn:
+        result = conn.execute(query, {"vec": vec_str, "top_k": top_k})
+        res = []
+        for row in result.fetchall():
+            d = dict(row._mapping)
+            d["similarity"] = round(float(d["similarity"]), 4) if d.get("similarity") is not None else None
+            res.append(d)
+        return res

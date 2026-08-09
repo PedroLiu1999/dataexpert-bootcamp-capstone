@@ -191,8 +191,10 @@ def test_agent_tools_and_orchestrator():
 
 
 def test_idempotent_embeddings_upsert():
-    from src.db.repository import insert_paper_embeddings, _MOCK_EMBEDDINGS
+    from src.db.repository import insert_paper_embeddings, upsert_paper, vector_search_papers
     init_db()
+
+    upsert_paper("W_IDEM_1", "Idempotent Test Paper", "Abstract text")
 
     data_v1 = [{
         "paper_id": "W_IDEM_1",
@@ -202,7 +204,8 @@ def test_idempotent_embeddings_upsert():
         "model_name": "all-MiniLM-L6-v2",
         "created_at": "2026-08-08T00:00:00Z"
     }]
-    insert_paper_embeddings(data_v1)
+    count1 = insert_paper_embeddings(data_v1)
+    assert count1 == 1
 
     data_v2 = [{
         "paper_id": "W_IDEM_1",
@@ -212,12 +215,14 @@ def test_idempotent_embeddings_upsert():
         "model_name": "all-MiniLM-L6-v2",
         "created_at": "2026-08-08T00:01:00Z"
     }]
-    insert_paper_embeddings(data_v2)
+    count2 = insert_paper_embeddings(data_v2)
+    assert count2 == 1
 
-    # Verify no duplicate entries created for (paper_id, chunk_index)
-    matches = [e for e in _MOCK_EMBEDDINGS if e["paper_id"] == "W_IDEM_1" and e["chunk_index"] == 0]
-    assert len(matches) == 1
-    assert matches[0]["chunk_text"] == "Updated text v2"
+    matches = vector_search_papers([0.2] * 384, top_k=5)
+    idem_match = [m for m in matches if m["paper_id"] == "W_IDEM_1"]
+    assert len(idem_match) == 1
+    assert idem_match[0]["chunk_text"] == "Updated text v2"
+
 
 
 def test_openalex_retry_and_backoff():
@@ -272,25 +277,33 @@ def test_delta_cdf_analytics():
 
 
 def test_persist_authorship_data():
-    from src.db.repository import upsert_author, upsert_paper_author, _MOCK_AUTHORS, _MOCK_PAPER_AUTHORS
+    from src.db.repository import upsert_author, upsert_paper_author, upsert_paper
 
+    upsert_paper("W_TEST_PAPER", "Test Title", "Test Abstract")
     a_rec = upsert_author("A_TEST_1", "Geoffrey Hinton", "University of Toronto")
     assert a_rec["display_name"] == "Geoffrey Hinton"
-    assert _MOCK_AUTHORS["A_TEST_1"]["institution"] == "University of Toronto"
+    assert a_rec["institution"] == "University of Toronto"
 
     pa_rec = upsert_paper_author("W_TEST_PAPER", "A_TEST_1", author_position=1)
     assert pa_rec["paper_id"] == "W_TEST_PAPER"
-    assert len(_MOCK_PAPER_AUTHORS) >= 1
+    assert pa_rec["author_id"] == "A_TEST_1"
+
 
 
 
 def test_connection_engine_missing_env():
     import pytest
-    from src.db.connection import get_engine, _CredentialCache
+    import src.db.connection as conn_mod
 
-    with patch.dict("os.environ", {}, clear=True):
-        with pytest.raises(RuntimeError, match="PGHOST is not set"):
-            get_engine()
+    old_engine = conn_mod._engine
+    try:
+        conn_mod._engine = None
+        with patch.dict("os.environ", {}, clear=True):
+            with pytest.raises(RuntimeError, match="PGHOST is not set"):
+                conn_mod.get_engine()
+    finally:
+        conn_mod._engine = old_engine
+
 
 
 def test_credential_cache_minting():

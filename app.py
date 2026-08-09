@@ -90,8 +90,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize database schema
-init_db()
+# Initialize database schema (runs once per application process)
+@st.cache_resource
+def bootstrap_database() -> None:
+    init_db()
+
+bootstrap_database()
+
 
 # User session state setup
 DEFAULT_EMAIL = "student@databricks.com"

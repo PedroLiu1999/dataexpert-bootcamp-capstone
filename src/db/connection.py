@@ -92,6 +92,10 @@ def get_engine() -> Engine:
         # Single escape hatch for local testing against explicit connection URL
         lakebase_url = os.environ.get("LAKEBASE_URL")
         if lakebase_url:
+            if lakebase_url.startswith("postgresql://"):
+                lakebase_url = lakebase_url.replace("postgresql://", "postgresql+psycopg://", 1)
+            elif lakebase_url.startswith("postgres://"):
+                lakebase_url = lakebase_url.replace("postgres://", "postgresql+psycopg://", 1)
             logger.info("Connecting to Lakebase using LAKEBASE_URL environment override")
             _engine = create_engine(
                 lakebase_url,
@@ -101,6 +105,7 @@ def get_engine() -> Engine:
                 pool_pre_ping=True,
             )
             return _engine
+
 
         host = _require("PGHOST")
         user = _require("PGUSER")
