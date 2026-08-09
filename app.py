@@ -24,23 +24,17 @@ from src.agent.research_agent import ResearchAgent
 from src.agent.tools import (
     tool_add_paper_to_collection,
     tool_search_openalex_papers,
-    tool_track_reading_progress,
 )
 from src.analytics.delta_cdf import cdf_tracker
 from src.db.repository import (
-    add_paper_to_collection,
-    create_collection,
     create_learning_goal,
     create_user,
     get_collection_papers,
     get_user_by_email,
     get_user_collections,
-    get_user_learning_goals,
-    get_user_notes,
     get_user_reading_progress,
     init_db,
     update_reading_progress,
-    vector_search_papers,
 )
 
 # Page configuration

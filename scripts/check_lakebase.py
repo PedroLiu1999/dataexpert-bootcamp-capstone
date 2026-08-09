@@ -1,7 +1,6 @@
 """Smoke test script for Lakebase PostgreSQL + pgvector connection."""
 
 import logging
-import sys
 from sqlalchemy import text
 from src.db.connection import get_engine
 

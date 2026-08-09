@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List, Iterator, Tuple
+from typing import Any, Dict, List, Iterator
 
 from src.db.repository import init_db, insert_paper_embeddings, upsert_paper, upsert_author, upsert_paper_author
 

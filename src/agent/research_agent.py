@@ -7,7 +7,6 @@ for LLM tool calling when serving endpoints are configured, with secure payload 
 from __future__ import annotations
 
 from datetime import datetime, timezone
-import json
 import logging
 import os
 from typing import Any, Dict, List, Optional
@@ -19,7 +18,6 @@ from src.agent.tools import (
     tool_search_openalex_papers,
     tool_track_reading_progress,
     tool_vector_search_papers,
-    validate_tool_call,
 )
 
 logger = logging.getLogger(__name__)

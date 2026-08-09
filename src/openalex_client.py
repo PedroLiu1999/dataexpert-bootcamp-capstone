@@ -5,7 +5,6 @@ Reconstructs abstracts from OpenAlex abstract_inverted_index representation.
 
 from __future__ import annotations
 
-from functools import lru_cache
 import logging
 import os
 from typing import Any, Dict, List, Optional

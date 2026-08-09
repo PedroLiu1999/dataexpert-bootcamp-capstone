@@ -5,8 +5,8 @@ Includes 9 core business domain tables + paper_embeddings vector storage table.
 
 from datetime import datetime, timezone
 import uuid
-from typing import Any, Dict, List, Optional
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, Table
+from typing import List, Optional
+from sqlalchemy import ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 

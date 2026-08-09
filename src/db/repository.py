@@ -6,7 +6,7 @@ reading_progress, notes, paper_chunks + pgvector cosine similarity search.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
