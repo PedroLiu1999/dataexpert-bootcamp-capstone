@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import logging
+import os
 from typing import Any, Dict, List
+
+# Ensure HuggingFace & PyTorch use writable /tmp cache on Databricks Serverless worker nodes
+os.environ.setdefault("HF_HOME", "/tmp/hf_cache")
+os.environ.setdefault("TORCH_HOME", "/tmp/torch_cache")
 
 from src.db.repository import init_db, insert_paper_embeddings, upsert_paper, upsert_author, upsert_paper_author
 
@@ -29,6 +34,9 @@ def get_embedding_model():
     global _model_instance
     if _model_instance is not None:
         return _model_instance
+
+    os.environ["HF_HOME"] = "/tmp/hf_cache"
+    os.environ["TORCH_HOME"] = "/tmp/torch_cache"
 
     from sentence_transformers import SentenceTransformer
 
