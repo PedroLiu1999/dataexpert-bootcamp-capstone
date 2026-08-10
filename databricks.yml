@@ -9,11 +9,6 @@ artifacts:
     build: uv build --wheel
     path: .
 
-variables:
-  pg_host:
-    description: DNS host of the Lakebase dev read-write endpoint.
-    default: "ep-lingering-glitter-d87p4ci7.database.us-east-2.cloud.databricks.com"
-
 resources:
   postgres_projects:
     capstone_lakebase_project:
@@ -62,7 +57,6 @@ resources:
               limit: "25"
               user_id: "scheduled-job"
               pg_endpoint: ${resources.postgres_endpoints.dev_endpoint.id}
-              pg_host: ${var.pg_host}
               pg_database: "databricks_postgres"
               pg_schema: "capstone"
               bundle_root: ${workspace.root_path}
