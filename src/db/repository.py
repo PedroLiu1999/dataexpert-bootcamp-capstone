@@ -16,19 +16,23 @@ from src.db.connection import get_engine
 logger = logging.getLogger(__name__)
 
 
+import os
 from pathlib import Path
 
 
 def init_db() -> None:
     """Initializes PostgreSQL tables and pgvector schema using migrations/001_init.sql."""
     engine = get_engine()
-    migration_file = Path(__file__).resolve().parents[2] / "migrations" / "001_init.sql"
-    if not migration_file.exists():
-        migration_file = Path(__file__).resolve().parent / "001_init.sql"
+    migration_dir = os.environ.get("CAPSTONE_MIGRATIONS_DIR")
+    if migration_dir:
+        migration_file = Path(migration_dir) / "001_init.sql"
+    else:
+        migration_file = Path(__file__).resolve().parents[2] / "migrations" / "001_init.sql"
+        if not migration_file.exists():
+            migration_file = Path(__file__).resolve().parent / "001_init.sql"
 
     if not migration_file.exists():
-        logger.warning("Migration DDL file not found at %s; skipping initialization", migration_file)
-        return
+        raise FileNotFoundError(f"Migration DDL file not found at {migration_file}")
 
     sql_content = migration_file.read_text(encoding="utf-8")
     with engine.begin() as conn:

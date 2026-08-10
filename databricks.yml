@@ -3,13 +3,23 @@
 bundle:
   name: capstone-app
 
+artifacts:
+  capstone_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  pg_host:
+    description: DNS host of the Lakebase dev read-write endpoint.
+    default: "ep-lingering-glitter-d87p4ci7.database.us-east-2.cloud.databricks.com"
+
 resources:
   postgres_projects:
     capstone_lakebase_project:
       project_id: 'capstone-lakebase-new'
       display_name: 'Capstone Research Lakebase'
       pg_version: 17
-
 
   postgres_branches:
     dev_branch:
@@ -34,13 +44,8 @@ resources:
         - name: postgres
           postgres:
             branch: ${resources.postgres_branches.dev_branch.id}
-            database: ${resources.postgres_branches.dev_branch.id}/databases/databricks_postgres
+            database: ${resources.postgres_branches.dev_branch.id}/databases/databricks-postgres
             permission: CAN_CONNECT_AND_CREATE
-
-
-
-
-
 
   jobs:
     paper_spark_ingestion_job:
@@ -56,21 +61,19 @@ resources:
               search_query: "Graph Neural Networks for Drug Discovery"
               limit: "25"
               user_id: "scheduled-job"
+              pg_endpoint: ${resources.postgres_endpoints.dev_endpoint.id}
+              pg_host: ${var.pg_host}
+              pg_database: "databricks_postgres"
+              pg_schema: "capstone"
+              bundle_root: ${workspace.root_path}
           environment_key: default
 
       environments:
         - environment_key: default
           spec:
-            client: "3"
+            environment_version: "4"
             dependencies:
-              - "databricks-sdk>=0.89.0"
-              - "streamlit>=1.61.1"
-              - "psycopg[binary,pool]>=3.2"
-              - "pgvector>=0.5.0"
-              - "sentence-transformers>=5.7.0"
-              - "requests>=2.34.2"
-              - "sqlalchemy>=2.0.51"
-              - "python-dotenv>=1.0.0"
+              - ./dist/*.whl
 
 targets:
   dev:

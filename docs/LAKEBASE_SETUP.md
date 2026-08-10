@@ -40,6 +40,12 @@ GRANT CONNECT ON DATABASE databricks_postgres TO "<DATABRICKS_CLIENT_ID>";
 GRANT USAGE ON SCHEMA capstone TO "<DATABRICKS_CLIENT_ID>";
 ```
 
+### 2.1 Job Task Run-As Identity Grants & Ownership Subtlety
+
+The scheduled Databricks job notebook connects as its **run-as identity** (`WorkspaceClient().current_user.me().user_name`), which differs from the App's Service Principal:
+- The job run-as identity requires `USAGE, CREATE ON SCHEMA capstone` and `CONNECT ON DATABASE databricks_postgres`.
+- **Table Ownership Note**: `init_db()` executing inside the job task creates tables owned by the job run-as identity. Standard PostgreSQL `ALTER DEFAULT PRIVILEGES` only grants privileges on objects created by the role that executes that statement. Ensure default privileges are configured on the job run-as identity role as well so the Streamlit App retains access to newly created tables.
+
 ---
 
 ## 3. Local Development Environment Configuration
@@ -47,14 +53,14 @@ GRANT USAGE ON SCHEMA capstone TO "<DATABRICKS_CLIENT_ID>";
 For local development against Lakebase using user OAuth credentials:
 
 ```bash
-databricks auth login --host https://<workspace>.cloud.databricks.com
+databricks auth login --host https://dbc-117d1e6a-753a.cloud.databricks.com
 
-export PGHOST="ep-capstone-primary.database.cloud.databricks.com"
+export PGHOST="ep-lingering-glitter-d87p4ci7.database.us-east-2.cloud.databricks.com"
 export PGPORT="5432"
 export PGDATABASE="databricks_postgres"
 export PGUSER="your.email@company.com"
 export PGSSLMODE="require"
-export PGENDPOINT="projects/capstone-lakebase/branches/dev/endpoints/primary"
+export PGENDPOINT="projects/capstone-lakebase-new/branches/dev/endpoints/primary"
 export PGSCHEMA="capstone"
 
 uv run streamlit run app.py
@@ -76,4 +82,3 @@ gh secret set DATABRICKS_TOKEN --repo PedroLiu1999/dataexpert-bootcamp-capstone 
 # 3. List GitHub Repository Secrets
 gh secret list --repo PedroLiu1999/dataexpert-bootcamp-capstone
 ```
-
